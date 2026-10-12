@@ -15,7 +15,7 @@ class SettingsReportTests(unittest.TestCase):
             (root/'system/snappyHexMeshDict').write_text("addLayers false; castellatedMesh true; snap true; castellatedMeshControls { refinementSurfaces { propeller { level (3 4); } } }")
             result = create_settings_report_data(root, 4000, 'AMI', 'kOmegaSST', True)
             sections = str(result['sections'])
-            self.assertIn('Layer generation (disabled)', sections)
+            self.assertIn('Native layer generation (requested)', sections)
             self.assertIn('false', sections)
             self.assertIn('propeller', sections)
             self.assertIn('(3 4)', sections)
@@ -76,3 +76,20 @@ class SettingsReportTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NativeLayerDictionaryTests(unittest.TestCase):
+    def test_feature_list_include_and_layer_controls_preserve_scheme_keys(self):
+        from tools.settings_report import read_dictionary, resolve_dictionary
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case/'features').write_text('{ file "custom_te.eMesh"; levels ((0.001 7)); }')
+            (case/'dict').write_text('addLayers true; features (\n#include "features"\n); '
+                                    'addLayersControls { layers { propeller { nSurfaceLayers 3; } } } '
+                                    'gradSchemes { grad(U) cellLimited Gauss linear 1; }')
+            warnings = []
+            data = resolve_dictionary(read_dictionary(case/'dict',case,{},warnings))
+            self.assertFalse(warnings)
+            self.assertIn('custom_te.eMesh',data['features'])
+            self.assertEqual(data['addLayersControls']['layers']['propeller']['nSurfaceLayers'],'3')
+            self.assertEqual(data['gradSchemes']['grad(U)'],'cellLimited Gauss linear 1')

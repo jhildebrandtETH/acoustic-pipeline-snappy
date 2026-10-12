@@ -1,8 +1,8 @@
 # Acoustic pipeline — snappy only
 
-STL input → blockMesh → surfaceFeatures → snappyHexMesh (castellation and snapping only) → rotating cell zone and NCC interface → OpenFOAM 13 `foamRun -solver incompressibleFluid` → reports and optional acoustics.
+STL input → blockMesh → surfaceFeatures → snappyHexMesh (castellation, snapping and optional native layers) → rotating cell zone and NCC interface → OpenFOAM 13 `foamRun -solver incompressibleFluid` → reports and optional acoustics.
 
-The production pipeline generates no boundary layers. `addLayers` is false in every template and is reasserted before each meshing run. There is no integrated layer backend or layer CLI option.
+Native snappy layers are enabled by `addLayers true` in `Parameters/snappyHexMeshDict.cpp`. Set it to `false` to disable them. All layer controls are in that same file; there is no separate layer tool or CLI switch.
 
 ## Setup
 
@@ -34,7 +34,7 @@ The scheduler preserves per-case core allocations, runs independent cases concur
 python main.py --sim-dir output/my-order --resume
 ```
 
-Resume uses stored settings and allocations. Only orders created by this unlayered snappy backend can resume; older backend orders require a fresh order directory. Failed meshing restarts from a fresh case while preserving the previous case in a timestamped sibling. Completed mesh/solve checkpoints allow report recovery without repeating the solver. A file lock prevents simultaneous launchers from modifying one order.
+Resume uses stored settings and allocations. Native-snappy and previous unlayered-snappy orders can resume; other backend orders require a fresh order directory. Failed meshing restarts from a fresh case while preserving the previous case in a timestamped sibling. Completed mesh/solve checkpoints allow report recovery without repeating the solver. A file lock prevents simultaneous launchers from modifying one order.
 
 ## Templates and mesh settings
 
@@ -51,7 +51,7 @@ Wall treatment configures the turbulence boundary conditions; it does not genera
 
 Geometry preparation measures the STL span, creates the cylinder and refinement surfaces, and sizes the domain around the sphere. Inlet is +Y and the longer wake region is -Y. A refinement sphere exists even when acoustic sampling is disabled. Generated domain bounds and mesh location are stored in each case's Parameters directory; provenance is recorded in `mesh/geometry.json`.
 
-Studies use `--study --study-file snappyHexMeshDict --study-parameter propellerSurfaceRefinementLevel --study-values '(3 3)...(4 4)'` with one STL and one RPM. JSON geometry settings also support studies. Layer generation cannot be enabled by a study.
+Studies use `--study --study-file snappyHexMeshDict --study-parameter propellerSurfaceRefinementLevel --study-values '(3 3)...(4 4)'` with one STL and one RPM. JSON geometry settings also support studies. The `addLayers` switch can also be varied with a parameter study.
 
 Serial cases mesh and solve serially. Parallel cases use their allocated MPI cores for snappy, reconstruct the root mesh for checks and coupling, and decompose the coupled mesh afresh before solving. Standard checkMesh acceptance is enforced before and after NCC; extended geometry/topology diagnostics are retained separately. `--allow-bad-mesh` explicitly overrides standard quality checks, but never missing patches, invalid volume or inadequate interface coverage.
 
@@ -69,7 +69,7 @@ For a non-rotating input case with its own system dictionaries and triSurface ge
 python main.py --mesh-case /path/to/input-case --sim-dir output/simple-case --mesh-only
 ```
 
-This serial workflow also forces layers off, checks the mesh and creates a PDF report. Add `--mesh-native` to use a locally sourced OpenFOAM 13 installation.
+This serial workflow respects the supplied case�s layer settings, checks the mesh and creates a PDF report. Add `--mesh-native` to use a locally sourced OpenFOAM 13 installation.
 
 ## Validation
 
@@ -78,7 +78,7 @@ python -m pip install -r requirements-test.txt
 python -m unittest discover -s tests
 ```
 
-The regression suite covers case preservation, scheduler/resume, solver completion, templates, geometry, no-layer meshing orchestration, and report contents. Optional visualization checks need the corresponding rendering libraries. Integration with OpenFOAM requires the Docker image above.
+The regression suite covers case preservation, scheduler/resume, solver completion, templates, geometry, native meshing orchestration, and report contents. Optional visualization checks need the corresponding rendering libraries. Integration with OpenFOAM requires the Docker image above.
 
 ## Custom OBJ feature refinement
 
@@ -127,10 +127,30 @@ source hashes. Start a fresh order to apply new controls reliably; already-meshe
 resume checkpoints do not remesh simply because an input curve was edited.
 
 The implementation uses OpenFOAM 13's native [feature-distance refinement](https://cpp.openfoam.org/v13/refinementFeatures_8C_source.html).
-It requires no external mesher and never enables inflation layers.
+It requires no external mesher and works with native snappy layers enabled or disabled.
 
 To run the optional real OpenFOAM comparison test:
 
 ```sh
 OPENFOAM_FEATURE_TESTS=1 python -m unittest discover -s tests -p test_snappy_features.py
 ```
+
+
+## Native snappy layers
+
+Edit `Parameters/snappyHexMeshDict.cpp` before preparing a new case:
+
+- `addLayers true` enables snappy layer addition; `false` disables it.
+- `addLayersControls/layers/propeller/nSurfaceLayers` requests 3 layers initially.
+- `expansionRatio` starts at 1.2; `finalLayerThickness` starts at 0.3.
+- `relativeSizes true` makes thickness relative to the local cell outside the
+  layer stack. Use `false` and suitable metre values for absolute thicknesses.
+- `minThickness` and the smoothing/iteration controls are editable in the same block.
+
+Only the propeller wall is selected by default. Native snappy may reduce or omit
+layers locally to satisfy quality checks. The report's layer switch records the
+request, not guaranteed coverage; inspect `log.snappyHexMesh` and the mesh.
+Use exactly two thickness controls from expansion ratio, first-layer thickness,
+final-layer thickness and total thickness. See the [OpenFOAM 13 layer controls](https://doc.cfd.direct/openfoam/user-guide-v13/snappyhexmesh).
+Already prepared cases keep their copied parameters; edit the case copy or start
+a fresh order. A completed mesh is not regenerated merely by resuming an order.

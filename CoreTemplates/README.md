@@ -13,7 +13,8 @@ in both rotation modes, plus wall-resolved DES in AMI only.
 - Resolved SST/DES: native fixedValue conditions, zero wall k/nut and prescribed wall omega.
 - Resolved k-epsilon: LaunderSharmaKE low-Re formulation, zero wall k/modified epsilon/nut.
 
-All templates use snappyHexMesh with addLayers disabled. No layers are generated.
+All templates use the native addLayers switch and addLayersControls from
+Parameters/snappyHexMeshDict.cpp. Layers are enabled on the propeller by default.
 The mesh must resolve the viscous sublayer for the resolved templates; inspect y+.
 Wall treatment changes only OpenFOAM dictionaries. Both choices use the same
 preprocessing, coupling and solver workflow, with no custom boundary code or

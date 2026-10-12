@@ -1,4 +1,4 @@
-"""No-layer CLI, supplied-case orchestration and native utility gates."""
+"""Snappy-only CLI, supplied-case orchestration and native utility gates."""
 import contextlib
 import io
 import json
@@ -37,12 +37,10 @@ class SnappyOnlyTests(unittest.TestCase):
                 runner.return_value.run.side_effect = lambda case, program, flags, log: events.append(program)
                 report.side_effect = lambda **kwargs: events.append('report')
                 result = run_simple_mesh_pipeline(args)
-            self.assertEqual(events, ['foamDictionary', 'blockMesh', 'surfaceFeatures',
+            self.assertEqual(events, ['blockMesh', 'surfaceFeatures',
                                       'snappyHexMesh', 'checkMesh', 'report'])
-            self.assertEqual(runner.return_value.run.call_args_list[0].args[2],
-                             ['system/snappyHexMeshDict', '-entry', 'addLayers', '-set', 'false'])
             self.assertTrue(result['accepted'])
-            self.assertFalse(result['layers'])
+            self.assertTrue(result['layers'])
             self.assertEqual((source/'system/snappyHexMeshDict').read_text(), 'addLayers true;')
 
     def test_checkmesh_rejects_failure_and_disconnected_regions(self):

@@ -682,7 +682,7 @@ def reactivate_failed_cases_for_resume(
 
         if status == "failed":
             resume_status = case.get("resume_status")
-            if order.get("meshing_backend") == "snappy-no-layers-v1":
+            if order.get("meshing_backend") in ("snappy-native-v1", "snappy-no-layers-v1"):
                 case_path = Path(simulations_directory) / case["folder"]
                 # A completed mesh/solve is a durable reporting checkpoint.
                 # Mesh-only cases have no positive solver timestep to resume.

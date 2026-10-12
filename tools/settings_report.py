@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-def read_dictionary(path, case, sources, warnings, stack=()):
+def _dictionary_text(path, case, sources, warnings, stack=()):
     """Read local includes and ordinary dictionary entries without executing code.
 
     Expressions/directives are preserved, not evaluated. This deliberately is
@@ -29,8 +29,7 @@ def read_dictionary(path, case, sources, warnings, stack=()):
             return ''
         # Expand text in-place so includes obey dictionary order and scope.
         try:
-            entries = read_dictionary(target, case, sources, warnings, (*stack, path))
-            return serialize(entries)
+            return _dictionary_text(target, case, sources, warnings, (*stack, path))
         except (OSError, ValueError, UnicodeError) as exc:
             warnings.append(str(exc))
             return f'__unresolvedInclude "{match[2]}";'
@@ -42,6 +41,12 @@ def read_dictionary(path, case, sources, warnings, stack=()):
     text = re.sub(r'#includeEtc\s+"([^"\n]+)"\s*;?', external_include, text)
     if re.search(r'#(?:include\w*|code\w*|\{)', text):
         raise ValueError('Unsupported external include or code directive in ' + path.name)
+    return text
+
+
+def read_dictionary(path, case, sources, warnings, stack=()):
+    path = Path(path)
+    text = _dictionary_text(path, case, sources, warnings, stack)
     tokens = re.findall(r'"(?:\\.|[^"\\])*"|[{};]|[^\s{};]+', text)
     index = 0
 
@@ -58,8 +63,14 @@ def read_dictionary(path, case, sources, warnings, stack=()):
             if key == ';':
                 continue
             values = []
-            while index < len(tokens) and tokens[index] not in (';', '{', '}'):
-                values.append(tokens[index])
+            depth = 0
+            while index < len(tokens):
+                token = tokens[index]
+                if depth == 0 and token in (';', '{', '}'):
+                    break
+                if not token.startswith('"'):
+                    depth += token.count('(') - token.count(')')
+                values.append(token)
                 index += 1
             if index < len(tokens) and tokens[index] == '{':
                 index += 1
@@ -181,7 +192,8 @@ def create_settings_report_data(case_path, rpm, mode, turbulence_model, mesh_onl
     section('Snappy meshing', 'system/snappyHexMeshDict', [
         ('Castellation', mesh.get('castellatedMesh')),
         ('Snapping', mesh.get('snap')),
-        ('Layer generation (disabled)', mesh.get('addLayers')),
+        ('Native layer generation (requested)', mesh.get('addLayers')),
+        ('Native layer controls', mesh.get('addLayersControls')),
         ('Refinement', mesh.get('castellatedMeshControls')),
         ('Snapping controls', mesh.get('snapControls')),
         ('Quality limits', mesh.get('meshQualityControls'))])

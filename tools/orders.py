@@ -6,7 +6,7 @@ from tools import find_source_stls
 from tools import load_simulation_order
 from tools import parse_end_on
 from tools import reactivate_failed_cases_for_resume
-from tools.snappy_pipeline import preflight, safe_path, BACKEND
+from tools.snappy_pipeline import preflight, safe_path, BACKEND, COMPATIBLE_BACKENDS
 from tools.order_files import seed_current_stl, require_new_order
 from tools import save_simulation_order
 from tools import validate_acoustic_arguments
@@ -46,9 +46,9 @@ def prepare_simulation_order(args, parser):
             )
 
         raw_order = load_simulation_order(simulations_directory)
-        if raw_order.get("meshing_backend") != BACKEND:
+        if raw_order.get("meshing_backend") not in COMPATIBLE_BACKENDS:
             parser.error(
-                "This order was not created by the unlayered snappy pipeline; use a fresh order directory."
+                "This order was not created by a supported snappy pipeline; use a fresh order directory."
             )
         for stored_case in raw_order.get("cases", []):
             try:

@@ -1,4 +1,4 @@
-"""No-layer geometry and meshing regressions without requiring Docker."""
+"""Native snappy geometry and meshing regressions without requiring Docker."""
 import json
 from pathlib import Path
 import shutil
@@ -26,22 +26,30 @@ class SnappyTests(unittest.TestCase):
                                       study=('snappyGeometry.json','scale','0.001'))
                 data = json.loads((case/'mesh/geometry.json').read_text())
                 self.assertAlmostEqual(data['diameter_m'], .16)
-                self.assertFalse(data['layers'])
+                self.assertTrue(data['layers'])
                 self.assertTrue((case/'constant/triSurface/permeableSurface.stl').is_file())
                 self.assertEqual(data['acoustic_sphere_radius_m'] is None, acoustic != 'permeable')
                 self.assertIn('locationInMesh', (case/'Parameters/snappyGeometry.generated').read_text())
 
-    def test_layer_study_is_rejected(self):
+    def test_layer_switch_study_is_respected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            case = Path(tmp)
+            case = Path(tmp)/'case'
+            shutil.copytree(template_directory('AMI','kOmegaSST','yes'), case)
             shutil.copytree(mesh.ROOT/'Parameters', case/'Parameters')
-            with self.assertRaisesRegex(ValueError, 'Layer generation is disabled'):
-                mesh.prepare_geometry(case,case/'unused.stl',None,None,
-                                      study=('snappyHexMeshDict','addLayers','true'))
+            solid = trimesh.creation.icosphere(subdivisions=1, radius=.08)
+            solid.vertices[:,1] *= .1
+            source = Path(tmp)/'blade.stl'
+            solid.export(source)
+            for value, enabled in [('false',False), ('true',True)]:
+                mesh.prepare_geometry(case,source,None,None,
+                                      study=('snappyHexMeshDict','addLayers',value))
+                self.assertEqual(json.loads((case/'mesh/geometry.json').read_text())['layers'], enabled)
 
-    def run_fixture(self, cores=1, quality=True, allow_bad=False, coverage=1.0):
+    def run_fixture(self, cores=1, quality=True, allow_bad=False, coverage=1.0, layers=False):
         with tempfile.TemporaryDirectory() as tmp:
             case = Path(tmp)
+            (case/'system').mkdir()
+            (case/'system/snappyHexMeshDict').write_text('addLayers '+str(layers).lower()+';')
             (case/'mesh').mkdir()
             (case/'constant/polyMesh').mkdir(parents=True)
             (case/'constant/polyMesh/cellZones').write_text('rotaryRegion {}')
@@ -74,7 +82,8 @@ class SnappyTests(unittest.TestCase):
             ok,commands,status=self.run_fixture(cores)
             self.assertTrue(ok)
             self.assertFalse(status['layers'])
-            self.assertEqual(commands[0][-3:], ['addLayers','-set','false'])
+            self.assertEqual(commands[0], ['blockMesh'])
+            self.assertNotIn('foamDictionary', [c[0] for c in commands])
             names=[c[0] for c in commands]
             self.assertEqual('reconstructPar' in names,cores>1)
             if cores>1:
@@ -91,10 +100,17 @@ class SnappyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'coverage is inadequate'):
             self.run_fixture(allow_bad=True,coverage=.8)
 
-    def test_all_templates_disable_layers(self):
+    def test_all_templates_use_editable_layers(self):
         paths=list((mesh.ROOT/'CoreTemplates').rglob('snappyHexMeshDict'))
         self.assertGreaterEqual(len(paths),9)
         for path in paths:
             text=path.read_text()
-            self.assertRegex(text,r'addLayers\s+false;')
+            self.assertRegex(text,r'addLayers\s+\$addLayers;')
+            self.assertNotIn('addLayersControls {}',text)
             self.assertNotIn('nSurfaceLayers',text)
+
+    def test_enabled_layers_are_recorded_without_overriding_dictionary(self):
+        for cores in (1,2):
+            ok, commands, status = self.run_fixture(cores=cores,layers=True)
+            self.assertTrue(status['layers'])
+            self.assertNotIn('foamDictionary', [c[0] for c in commands])

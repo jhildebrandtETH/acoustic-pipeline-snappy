@@ -10,7 +10,7 @@ FoamFile
 
 castellatedMesh $castellatedMesh;
 snap            $snap;
-addLayers       false;
+addLayers       $addLayers;
 
 geometry
 {
@@ -184,7 +184,7 @@ snapControls
         multiRegionFeatureSnap $multiRegionFeatureSnap;
 }
 
-addLayersControls {}
+// addLayersControls is supplied by Parameters/snappyHexMeshDict.cpp.
 
 meshQualityControls
 {

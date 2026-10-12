@@ -99,7 +99,7 @@ class FeatureTests(unittest.TestCase):
                 prepare_geometry(case,source,None,None,study=('snappyFeatures.json','teLevel','7'))
             geometry=json.loads((case/'mesh/geometry.json').read_text())
             self.assertEqual(geometry['features']['groups']['te']['level'],7)
-            self.assertFalse(geometry['layers'])
+            self.assertTrue(geometry['layers'])
             report=create_settings_report_data(case,4000,'AMI','kOmegaSST',mesh_only=True)
             self.assertIn('custom_te.eMesh', json.dumps(report))
             self.assertIn('Custom OBJ feature refinement', json.dumps(report))
@@ -125,14 +125,14 @@ class NativeFeatureTests(unittest.TestCase):
             curve=''.join('v '+' '.join(map(str,solid.vertices[i]))+'\n' for i in edge)+'l 1 2\n'
             (root/'FEATURES/blade_te.obj').write_text(curve)
             counts=[]
-            for enabled in (False, True):
-                case=root/str(enabled)
+            for enabled, layers in ((False,False), (True,False), (True,True)):
+                case=root/(str(enabled)+'-'+str(layers))
                 shutil.copytree(template_directory('AMI','kOmegaSST','yes'),case)
                 shutil.copytree(ROOT/'Parameters',case/'Parameters')
                 (case/'Parameters/snappyFeatures.json').write_text(json.dumps(dict(
                     enabled=enabled,groups=['te'],teLevel=4,teRefinementThickness=.015)))
                 mesh=case/'Parameters/snappyHexMeshDict.cpp'
-                for key,value in [('propellerSurfaceRefinementLevel','(2 2)'),
+                for key,value in [('addLayers', str(layers).lower()), ('propellerSurfaceRefinementLevel','(2 2)'),
                                   ('propellerRefinementRegionLevel','((0.0045 2))'),
                                   ('rotaryRegionSurfaceRefinementLevel','(1 1)'),
                                   ('rotaryRegionRefinementRegionLevel','((1E15 1))'),
@@ -153,5 +153,8 @@ class NativeFeatureTests(unittest.TestCase):
                 if enabled:
                     self.assertIn('custom_te.eMesh',log)
                     self.assertIn('distance',log.lower())
+                if layers:
+                    self.assertIn('Layer', log)
+                    self.assertRegex(log, r'Added\s+[1-9][0-9]*\s+(?:out of.*? )?cells')
             self.assertGreater(counts[1],counts[0])
-            print('Native snappy cell counts, baseline/custom:',counts)
+            print('Native snappy cell counts, baseline/custom/custom with layers:',counts)

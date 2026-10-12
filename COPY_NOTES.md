@@ -10,14 +10,15 @@ Simulation outputs, temporary experiments, build artifacts and Python caches are
 excluded. Supply your propeller STL in the new order's STL directory.
 
 Meshing uses only blockMesh, surfaceFeatures and snappyHexMesh, followed by the
-existing rotor/NCC and mesh-quality checks. Inflation layers are always disabled.
+existing rotor/NCC and mesh-quality checks. Native snappy layers are now configurable and enabled by default in
+Parameters/snappyHexMeshDict.cpp.
 Layer generators, preparation/repair tools, experimental candidate workflows,
-layer configuration/CLI switches and layer-specific report pages were removed.
+external layer configuration/CLI switches and layer-specific report pages were removed.
 
 Retained: parallel case scheduling, resume/checkpoints, parameter studies,
 solver controls, turbulence/wall-treatment templates, acoustics, visualization,
 PDF reports, settings provenance, mesh quality, cell volumes, first-cell spacing,
-y+ and Courant diagnostics. First-cell spacing reporting measures the unlayered
+y+ and Courant diagnostics. First-cell spacing reporting measures the actual
 mesh; it does not generate boundary layers.
 
 Custom FEATURES/<geometry>_<group>.obj refinement is restored for le, te, tip,
@@ -29,3 +30,6 @@ optional tests skipped in that run. The custom-feature OpenFOAM integration test
 was then run separately and passed: 5,793 cells without custom refinement versus
 7,558 cells with it. The other 3 optional tests (NCC coupling and two ParaView
 renders) remain unrun. No production propeller solve was performed.
+
+Native layer validation: real OpenFOAM meshing added layer cells with custom OBJ
+refinement enabled (7,558 cells without layers; 9,156 with layers).

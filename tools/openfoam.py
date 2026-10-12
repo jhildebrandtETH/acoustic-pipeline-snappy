@@ -1016,7 +1016,7 @@ def create_simulation_order(args, simulations_directory: Path):
         "schema_version": 3,
         "wall_functions": args.wall_functions,
         "aerodynamics_only": args.aerodynamics_only,
-        "meshing_backend": "snappy-no-layers-v1",
+        "meshing_backend": "snappy-native-v1",
         "acoustic_surface": args.acoustic_surface,
         "acoustic_sphere_diameter": args.acoustic_sphere_diameter,
         "mode": args.mode,

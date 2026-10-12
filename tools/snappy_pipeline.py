@@ -1,4 +1,4 @@
-"""Foundation OpenFOAM 13 snappy meshing with no boundary-layer generation."""
+"""Foundation OpenFOAM 13 snappy meshing with configurable native layer generation."""
 import json
 import math
 import os
@@ -7,7 +7,8 @@ import re
 import shlex
 
 ROOT = Path(__file__).resolve().parent.parent
-BACKEND = "snappy-no-layers-v1"
+BACKEND = "snappy-native-v1"
+COMPATIBLE_BACKENDS = (BACKEND, "snappy-no-layers-v1")
 
 
 def safe_path(path):
@@ -58,8 +59,6 @@ def preflight(args):
             data = resolve_dictionary(read_dictionary(path, ROOT, {}, []))
             if args.study_parameter not in data:
                 raise ValueError(f'Unknown study parameter: {args.study_parameter}')
-        if args.study_parameter == 'addLayers':
-            raise ValueError('Layer generation is disabled in this pipeline')
 
 
 def write(path, text):
@@ -72,6 +71,19 @@ def header(name):
     return f'FoamFile {{ version 2.0; format ascii; class dictionary; object {name}; }}\n'
 
 
+def configured_layers(case):
+    """Report the requested switch, not a guarantee of complete layer coverage."""
+    from tools.settings_report import read_dictionary, resolve_dictionary
+    path = Path(case)/'system/snappyHexMeshDict'
+    if not path.is_file():
+        return False
+    data = resolve_dictionary(read_dictionary(path, case, {}, []))
+    value = data.get('addLayers', 'false').lower()
+    if value not in ('true', 'yes', 'on', '1', 'false', 'no', 'off', '0'):
+        raise ValueError(f'Cannot resolve addLayers in {path}: {value}')
+    return value in ('true', 'yes', 'on', '1')
+
+
 def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=None):
     import numpy as np
     import trimesh
@@ -81,8 +93,6 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
     if study:
         filename, entry, value = study
         path = parameter_file(case/'Parameters', filename)
-        if entry == 'addLayers':
-            raise ValueError('Layer generation is disabled in this pipeline')
         if path.suffix == '.json':
             data = json.loads(path.read_text())
             if entry not in data:
@@ -160,7 +170,7 @@ outlet { type patch; faces ((1 5 4 0)); }
     from tools.snappy_features import prepare_features
     features = prepare_features(case, source, config['scale'])
     write(case/'mesh/geometry.json', json.dumps(dict(
-        backend=BACKEND, layers=False, source=str(source), source_sha256=digest,
+        backend=BACKEND, layers=configured_layers(case), source=str(source), source_sha256=digest,
         scale=config['scale'], diameter_m=diameter, box_min=lower, box_max=upper,
         rotor_radius_m=radius, rotor_half_length_m=half, axis=[0,1,0], origin=[0,0,0],
         expected_fluid_volume_m3=float(np.prod(np.array(upper)-lower))-abs(volume),
@@ -207,8 +217,6 @@ def run_mesh(container, case, cores, allow_bad, callback=None, live=False):
         container = container()
     def run(command, log):
         docker_run(container, case, command, log, callback, live)
-    # Reassert the invariant after parameter studies and user dictionary edits.
-    run(['foamDictionary', 'system/snappyHexMeshDict', '-entry', 'addLayers', '-set', 'false'], 'log.disableLayers')
     run(['blockMesh'], 'log.blockMesh')
     run(['surfaceFeatures'], 'log.surfaceFeatures')
     if cores > 1:
@@ -244,7 +252,7 @@ def finish_rotor_mesh(container, case, allow_bad, callback=None, live=False):
     if not math.isfinite(volume) or abs(volume-expected_volume)/expected_volume > settings['maxRelativeVolumeError']:
         raise ValueError('Mesh fluid volume differs from the input geometry; inspect log.checkMesh')
     quality = mesh_ok(text)
-    status = dict(backend=geometry.get('backend',BACKEND), layers=False, mesh_quality_ok=quality,
+    status = dict(backend=geometry.get('backend',BACKEND), layers=configured_layers(case), mesh_quality_ok=quality,
                   extended_mesh_diagnostics_ok=mesh_ok((case/'log.checkMesh.extended').read_text()),
                   allow_bad_mesh=allow_bad, patches=patches)
     write(case/'mesh/mesh-status.json', json.dumps(status, indent=2)+'\n')

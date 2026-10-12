@@ -4,7 +4,7 @@
 `order_files.py` locks orders and preserves input handling.
 `scheduler.py` manages CPU budgets, dashboard, checkpoints and case workers.
 `preprocessing.py` isolates geometry preparation and preserves previous cases.
-`snappy_pipeline.py` prepares STL geometry, runs standard OpenFOAM meshing and validates the coupled mesh without layers.
+`snappy_pipeline.py` prepares STL geometry, runs standard OpenFOAM meshing and validates the coupled mesh with configurable native layers.
 `simple_mesh_pipeline.py` and `mesh_runner.py` run supplied snappy cases and their reports with Docker or native OpenFOAM.
 `templates.py` selects mode, turbulence and wall-treatment dictionaries.
 `openfoam.py` contains solver monitoring, reconstruction and order helpers.

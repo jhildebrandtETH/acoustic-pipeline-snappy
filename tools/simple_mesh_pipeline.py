@@ -19,7 +19,7 @@ def run_simple_mesh_pipeline(args):
     runner = Runner(docker=not args.mesh_native)
     output.mkdir(parents=True, exist_ok=False)
     status = dict(completed=False, accepted=False, stage='copying inputs', source=str(source),
-                  backend='snappy-simple-v1', layers=False)
+                  backend='snappy-simple-v1')
     def stage(name):
         status['stage'] = name
         write_json(output/'mesh-pipeline-status.json', status)
@@ -33,8 +33,9 @@ def run_simple_mesh_pipeline(args):
             shutil.copytree(source/'constant', base/'constant', ignore=shutil.ignore_patterns('polyMesh'))
         if (source/'Parameters').is_dir():
             shutil.copytree(source/'Parameters', base/'Parameters')
-        stage('running snappyHexMesh without layers')
-        runner.run(base, 'foamDictionary', ['system/snappyHexMeshDict', '-entry', 'addLayers', '-set', 'false'], 'log.disableLayers')
+        from tools.snappy_pipeline import configured_layers
+        status['layers'] = configured_layers(base)
+        stage('running snappyHexMesh')
         runner.run(base, 'blockMesh', [], 'log.blockMesh')
         if (base/'system/surfaceFeaturesDict').is_file():
             runner.run(base, 'surfaceFeatures', [], 'log.surfaceFeatures')
