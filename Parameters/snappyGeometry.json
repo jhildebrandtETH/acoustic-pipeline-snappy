@@ -1,0 +1,13 @@
+{
+  "scale": 1.0,
+  "rotorRadiusFactor": 0.6,
+  "rotorHalfLength": 0.025,
+  "cylinderSegments": 256,
+  "refinementSphereDiameter": 2.0,
+  "lateralMargin": 0.1,
+  "inletMargin": 0.1,
+  "inletFraction": 0.3,
+  "maxRelativeVolumeError": 0.02,
+  "minimumFaceCoverage": 0.95,
+  "minimumAverageCoverage": 0.99
+}

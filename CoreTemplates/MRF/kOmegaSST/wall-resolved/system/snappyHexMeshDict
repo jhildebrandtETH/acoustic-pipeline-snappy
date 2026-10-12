@@ -1,0 +1,227 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+
+#include "../Parameters/snappyHexMeshDict.cpp"
+
+castellatedMesh $castellatedMesh;
+snap            $snap;
+addLayers       false;
+
+geometry
+{
+    rotaryCylinder.stl
+    {
+        type        triSurfaceMesh;
+        file        "rotaryCylinder.stl";
+        name        rotaryRegion;
+        regions
+        {
+            patch0
+            {
+                name    rotaryRegion;
+            }
+        }
+    }
+    innerCylinder.stl
+    {
+        type        triSurfaceMesh;
+        file        "innerCylinder.stl";
+        name        innerCylinder;
+        regions
+        {
+            patch0
+            {
+                name    innerCylinder;
+            }
+        }
+    }
+    outerCylinder.stl
+    {
+        type        triSurfaceMesh;
+        file        "outerCylinder.stl";
+        name        outerCylinder;
+        regions
+        {
+            patch0
+            {
+                name    outerCylinder;
+            }
+        }
+    }
+    permeableSurface.stl
+    {
+        type        triSurfaceMesh;
+        file        "permeableSurface.stl";
+        name        acousticSurface;
+        regions
+        {
+            patch0
+            {
+                name    acousticSurface;
+            }
+        }
+    }
+    propeller.stl
+    {
+        type        triSurfaceMesh;
+        file        "propeller.stl";
+        name        propeller;
+        regions
+        {
+            patch0
+            {
+                name    propeller;
+            }
+        }
+    }
+    
+}
+
+castellatedMeshControls
+{
+
+    maxLocalCells $maxLocalCells;
+
+    maxGlobalCells $maxGlobalCells;
+
+    minRefinementCells $minRefinementCells;
+
+    maxLoadUnbalance $maxLoadUnbalance;
+
+    nCellsBetweenLevels $nCellsBetweenLevels;
+
+    features
+    (
+        #includeIfPresent "../Parameters/snappyFeatures.generated"
+
+        {
+            file        "propeller.eMesh";
+            level       4;
+        }
+
+    );
+
+    refinementSurfaces
+    {
+        rotaryRegion
+        {
+            level       $rotaryRegionSurfaceRefinementLevel;
+         
+            faceType    boundary;
+            cellZone    rotaryRegion;
+            faceZone    rotaryRegion;
+            cellZoneInside  inside;
+        }
+        propeller
+        {
+            level       $propellerSurfaceRefinementLevel;
+            patchInfo { type wall; }
+        }
+    }
+
+    resolveFeatureAngle 30;
+
+    refinementRegions
+    {
+        propeller
+        {
+            mode $propellerRefinementRegionMode;
+            levels $propellerRefinementRegionLevel;
+        }
+
+        rotaryRegion
+        {
+            mode $rotaryRegionRefinementRegionMode;
+            levels $rotaryRegionRefinementRegionLevel;
+        }
+
+        innerCylinder
+        {
+            mode        $innerCylinderRefinementRegionMode;
+            levels      $innerCylinderRefinementRegionLevel;
+        }
+
+        outerCylinder
+        {
+            mode        $outerCylinderRefinementRegionMode;
+            levels      $outerCylinderRefinementRegionLevel;
+        }
+        acousticSurface
+        {
+            mode        $acousticSurfaceRefinementRegionMode;
+            levels      $acousticSurfaceRefinementRegionLevel;
+        }
+
+    }
+
+    locationInMesh $locationInMesh;
+
+    allowFreeStandingZoneFaces false;
+}
+
+snapControls
+{
+
+    nSmoothPatch $nSmoothPatch;
+
+    tolerance $tolerance;
+
+    nSolveIter $nSolveIter;
+
+    nRelaxIter $nRelaxIter;
+
+        nFeatureSnapIter $nFeatureSnapIter;
+
+        implicitFeatureSnap $implicitFeatureSnap;
+
+        explicitFeatureSnap $explicitFeatureSnap;
+
+        multiRegionFeatureSnap $multiRegionFeatureSnap;
+}
+
+addLayersControls {}
+
+meshQualityControls
+{
+    
+    maxNonOrtho $maxNonOrtho;
+
+    maxBoundarySkewness $maxBoundarySkewness;
+    maxInternalSkewness $maxInternalSkewness;
+
+    maxConcave $maxConcave;
+
+    minVol $minVol;
+
+    minTetQuality 1e-30; 
+
+    minArea -1;
+
+    minTwist 0.01;
+
+    minDeterminant 0.001;
+
+    minFaceWeight 0.01;
+
+    minVolRatio 0.01;
+
+    minTriangleTwist -1;
+
+    nSmoothScale $nSmoothScale;
+    
+    errorReduction 0.75;
+
+    relaxed
+    {
+        
+        maxNonOrtho 75;
+    }
+}
+
+mergeTolerance $mergeTolerance;
+

@@ -1,0 +1,18 @@
+﻿
+# Exclude compiled Python files and the cache directory
+__pycache__/*.pyc
+
+STLs/*
+!STLs/.gitkeep
+.venv/
+**/.venv/
+__pycache__/
+*.pyc
+
+# Local simulation output and retired build artifacts
+runs/
+*Zone.Identifier
+
+# Local report recovery and rendering checks
+tmp/
+output/

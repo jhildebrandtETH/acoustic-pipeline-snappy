@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "groups": [
+    "le",
+    "te",
+    "tip",
+    "hub",
+    "other"
+  ],
+  "leLevel": 6,
+  "leRefinementThickness": 0.0005,
+  "teLevel": 6,
+  "teRefinementThickness": 0.0005,
+  "tipLevel": 6,
+  "tipRefinementThickness": 0.0005,
+  "hubLevel": 6,
+  "hubRefinementThickness": 0.0005,
+  "otherLevel": 6,
+  "otherRefinementThickness": 0.0005
+}
