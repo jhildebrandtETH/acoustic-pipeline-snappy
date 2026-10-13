@@ -11,11 +11,26 @@ import re
 import numpy as np
 
 P_REF = 20e-6
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / 'Parameters/acousticComparison.json'
+CONFIG_NAME = 'acousticComparison.json'
 
 
-def load_config(path=None):
-    return json.loads(Path(path or DEFAULT_CONFIG).read_text(encoding='utf-8'))
+def load_config(case_path, path=None):
+    """Read this case's settings afresh; never fall back to repository defaults.
+
+    An explicit alternate config must also live inside the case's Parameters.
+    Relative alternate paths are relative to that directory.
+    """
+    case = Path(case_path).resolve()
+    parameters = (case / 'Parameters').resolve()
+    candidate = Path(path) if path is not None else Path(CONFIG_NAME)
+    config_path = (parameters / candidate).resolve()
+    if not parameters.is_relative_to(case) or not config_path.is_relative_to(parameters):
+        raise ValueError(f'Acoustic config must be inside {case / "Parameters"}: {config_path}')
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f'Missing case acoustic config: {config_path}. '
+            'Create it in this case; repository defaults are not used.')
+    return json.loads(config_path.read_text(encoding='utf-8'))
 
 
 
@@ -184,6 +199,9 @@ def validate_config(config):
             raise ValueError(f'{name} must be positive and finite')
     if not np.isfinite(config['floor_db']):
         raise ValueError('floor_db must be finite')
+    blades = config.get('blade_count', 2)
+    if isinstance(blades, bool) or not isinstance(blades, int) or blades < 1:
+        raise ValueError('blade_count must be a positive integer')
     bins = config['frequency_bins_hz']
     if not bins or bins[0][0] != 0 or bins[-1][1] is not None:
         raise ValueError('Frequency bins must start at zero and end with null (remaining frequencies)')
@@ -196,7 +214,7 @@ def validate_config(config):
 
 def create_comparison(case_path, config=None):
     """Read cached simulation, select all matching repeats, write plots and metrics."""
-    config = load_config() if config is None else config
+    config = load_config(case_path) if config is None else config
     validate_config(config)
     report = Path(case_path) / 'report'
     with np.load(report / 'acoustic-pressure.npz', allow_pickle=False) as data:
@@ -247,6 +265,8 @@ def create_comparison(case_path, config=None):
         warnings.insert(0, source_note)
     metadata = {
         'status': 'complete', 'geometry': geometry, 'rpm': rpm,
+        'blade_count': config.get('blade_count', 2),
+        'blade_passing_frequency_hz': rpm * config.get('blade_count', 2) / 60,
         'source_note': source_note,
         'microphone_channel': str(config['microphone_channel']), 'observer_m': observer.tolist(),
         'microphone_position_m': positions[0], 'positions_match': bool(position_match),
@@ -270,6 +290,7 @@ def create_comparison(case_path, config=None):
 def plot_comparison(report, edges, simulated, measured, repeats, metadata):
     from tools.plotting import pyplot as plt
     from tools import MATPLOTLIB_LOCK
+    from tools.acoustic_annotations import add_bpf_markers
     blue, orange = '#2463a6', '#db7525'
     extend = lambda values: np.r_[values, values[-1]]
     ymin = min(simulated.min(), repeats.min()) - 5
@@ -277,7 +298,7 @@ def plot_comparison(report, edges, simulated, measured, repeats, metadata):
     with MATPLOTLIB_LOCK, plt.rc_context({'font.family': 'DejaVu Sans', 'font.size': 10}):
         for kind, title in [('simulated', 'Simulated spectrum'), ('measured', 'Experimental spectrum'), ('overlay', 'Acoustic agreement')]:
             fig, ax = plt.subplots(figsize=(10.5, 5.4))
-            fig.subplots_adjust(left=.09, right=.98, top=.81, bottom=.20)
+            fig.subplots_adjust(left=.09, right=.98, top=.81, bottom=.29)
             fig.suptitle(title, x=.09, ha='left', fontsize=18, fontweight='bold')
             ax.set_title(f"{metadata['geometry']}  |  {metadata['rpm']:g} RPM  |  microphone {metadata['microphone_channel']}  |  {metadata['repeat_count']} repeats", loc='left', fontsize=10, pad=14)
             if kind != 'measured':
@@ -299,9 +320,17 @@ def plot_comparison(report, edges, simulated, measured, repeats, metadata):
             else:
                 fig.text(.09, .055, f"Common Hann/Welch processing  |  nominal band width {metadata['nominal_bandwidth_hz']:.2f} Hz  |  unweighted", fontsize=10)
             ax.set(xlabel='Frequency [Hz]', ylabel='Narrow-band SPL [dB re 20 µPa]', xlim=(edges[0], edges[-1]), ylim=(ymin, ymax))
+            add_bpf_markers(ax, metadata['rpm'], metadata.get('blade_count', 2))
+            totals = []
+            if kind != 'measured':
+                totals.append(f"simulation {metadata['simulated_band_limited_spl_db']:.2f} dB")
+            if kind != 'simulated':
+                totals.append(f"experiment {metadata['measured_band_limited_spl_db']:.2f} dB")
+            fig.text(.09, .16, f"Band total ({edges[0]:.1f}-{edges[-1]:.1f} Hz): " + ' | '.join(totals), fontsize=9)
+            fig.text(.09, .115, f"FFT spacing {metadata['fft_spacing_hz']:.2f} Hz | duration {metadata['segment_duration_s']:.4f} s | BPF markers indicate expected tones", fontsize=9)
             ax.spines[['top', 'right']].set_visible(False)
             ax.grid(axis='y', alpha=.18)
-            ax.legend(loc='upper right', fontsize=8)
+            ax.legend(loc='upper right', fontsize=8, framealpha=.95)
             if metadata.get('source_note'):
                 fig.text(.09, .012, metadata['source_note'], fontsize=9, color='#a22b2b')
             elif not metadata['positions_match']:
@@ -379,7 +408,7 @@ def comparison_or_status(case_path, config=None):
     report = Path(case_path) / 'report'
     report.mkdir(parents=True, exist_ok=True)
     try:
-        config = load_config() if config is None else config
+        config = load_config(case_path) if config is None else config
         if not config.get('measurements_directory'):
             raise ValueError('Set measurements_directory in Parameters/acousticComparison.json to enable comparison.')
         return create_comparison(case_path, config)
@@ -392,10 +421,10 @@ def comparison_or_status(case_path, config=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('case', type=Path)
-    parser.add_argument('--config', type=Path)
+    parser.add_argument('--config', type=Path, help='Alternate config inside this case Parameters directory; relative paths start there.')
     parser.add_argument('--measurements', type=Path)
     args = parser.parse_args()
-    config = load_config(args.config)
+    config = load_config(args.case, args.config)
     if args.measurements:
         config['measurements_directory'] = str(args.measurements)
     result = comparison_or_status(args.case, config)

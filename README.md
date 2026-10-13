@@ -157,4 +157,8 @@ a fresh order. A completed mesh is not regenerated merely by resuming an order.
 
 ## Experimental acoustic agreement
 
-The acoustic stage compares matching experimental geometry/RPM recordings with the simulated observer pressure. Configure the measurement folder, microphone channel and frequency bins in Parameters/acousticComparison.json. See [the acoustic comparison guide](Parameters/acoustic-comparison.md) for metrics, assumptions and regenerating reports without rerunning CFD.
+The acoustic stage compares matching experimental geometry/RPM recordings with the simulated observer pressure. Configure the measurement folder, microphone channel and frequency bins in each case's `Parameters/acousticComparison.json`. Repository parameters seed new cases only; acoustic runs and report rebuilds read the copied case config without a source fallback. See [the acoustic comparison guide](Parameters/acoustic-comparison.md) for metrics, assumptions and regenerating reports without rerunning CFD.
+
+Future flow atlases include uncropped XY/YZ sections through the shaft, covering the full inlet and wake domain, plus labelled wake and rotor detail crops. The latest full-domain quantity/plane views are retained even if they exceed the report chapter page budget. Vortex extraction also uses the full domain.
+
+Acoustic report spectra mark BPF and its harmonics using `blade_count` in `Parameters/acousticComparison.json` (default 2 for older cases). Markers are expected frequencies, not detected peaks. Comparisons also show unweighted band-limited total SPL, FFT spacing and segment duration; the existing experimental repeat envelope is retained. FFT spacing is not the effective Hann/Welch spectral resolution.

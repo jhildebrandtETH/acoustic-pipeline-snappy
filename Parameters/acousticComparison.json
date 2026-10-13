@@ -1,5 +1,5 @@
 {
-  "measurements_directory": "C:/Users/jonas/Downloads/Measurements/Measurements",
+  "measurements_directory": "/home/jhildebrandt/measurements",
   "microphone_channel": "1",
   "frequency_bins_hz": [
     [
@@ -17,5 +17,6 @@
   ],
   "spectrum_bandwidth_hz": 20.0,
   "maximum_frequency_hz": 12000.0,
-  "floor_db": -120.0
+  "floor_db": -120.0,
+  "blade_count": 2
 }

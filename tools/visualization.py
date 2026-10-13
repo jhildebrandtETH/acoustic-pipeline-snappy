@@ -253,7 +253,18 @@ def select_report_views(views, maximum=32):
         if title.startswith("Permeable FW-H surface - pressure"):
             family = "Surface pressure"
         groups.setdefault(family, []).append(item)
-    selected = []
+    # Full-domain flow pictures are required, even with a small page budget.
+    required = {}
+    for item in views:
+        if 'full domain' in item['title']:
+            key = (item['title'], item.get('camera'))
+            if key not in required or item.get('time_s', 0) > required[key].get('time_s', 0):
+                required[key] = item
+    selected = list(required.values())
+    required_ids = {id(item) for item in selected}
+    groups = {key: [item for item in items if id(item) not in required_ids]
+              for key, items in groups.items()}
+    groups = {key: items for key, items in groups.items() if items}
     # Start with the latest view of each quantity, then add complementary views.
     pools = [sorted(items, key=lambda item: item.get("time_s", 0), reverse=True)
              for items in groups.values()]
@@ -1177,8 +1188,10 @@ return velocity(data)
         raise ValueError("No supported volume fields found")
     ranges_by_station = {}
     # Broad wake context plus rotor close-ups; all legends use these actual crops.
-    cuts = [("xy", [0, 0, 1], [0, 0, 0], "z=0, wake", [1.35*diameter, 2.5*diameter, 1.35*diameter]),
-            ("yz", [1, 0, 0], [0, 0, 0], "x=0, wake", [1.35*diameter, 2.5*diameter, 1.35*diameter]),
+    cuts = [("xy", [0, 0, 1], [0, 0, 0], "z=0, full domain", None),
+            ("yz", [1, 0, 0], [0, 0, 0], "x=0, full domain", None),
+            ("xy", [0, 0, 1], [0, 0, 0], "z=0, wake detail", [1.35*diameter, 2.5*diameter, 1.35*diameter]),
+            ("yz", [1, 0, 0], [0, 0, 0], "x=0, wake detail", [1.35*diameter, 2.5*diameter, 1.35*diameter]),
             ("xy", [0, 0, 1], [0, 0, 0], "z=0, rotor", [1.15*diameter]*3),
             ("yz", [1, 0, 0], [0, 0, 0], "x=0, rotor", [1.15*diameter]*3)]
     cuts += [("front", [0, 1, 0], [0, station*diameter, 0], f"y/D={station:g}", [1.35*diameter]*3)
@@ -1197,7 +1210,7 @@ return velocity(data)
                 sliced.SliceType = "Plane"
                 sliced.SliceType.Origin = origin
                 sliced.SliceType.Normal = normal
-                cropped = _pvvis_crop(sliced, origin, widths)
+                cropped = _pvvis_crop(sliced, origin, widths) if widths is not None else sliced
                 pressure = None
                 # Latest time gets the full diagnostic set; earlier times show
                 # velocity/pressure/vorticity to expose transient wake changes.
@@ -1232,17 +1245,18 @@ return velocity(data)
                             note = f" Pressure reference = {reference:.10g} {units[0]} (fixed range midpoint, not freestream or acoustic pressure)."
                         _pvvis_attempt(result, run_dir, f"{name}, {station}, t={t:g}", lambda: _pvvis_render(
                             display_source, result, settings, run_dir, view, f"Flow slice - {name.replace('_', ' ')} ({station})",
-                            f"Plane {station}, laboratory frame; D={diameter:.6g} m. Inspect wake asymmetry, shear layers and rotor loading. Color range covers this cropped station across all selected phases; compare legends between stations." + note,
+                            f"Plane {station}, laboratory frame; D={diameter:.6g} m. Inspect wake asymmetry, shear layers and rotor loading. Color range covers the displayed section across all selected phases; compare legends between sections. Full-domain views include the complete inlet-to-outlet extent; detail views are cropped." + note,
                             camera=camera, field=("CELLS", display_name, label), limits=limits,
                             time_s=t, diverging=diverging))
                 finally:
                     if pressure is not None:
                         pvs.Delete(pressure)
-                    pvs.Delete(cropped)
+                    if cropped is not sliced:
+                        pvs.Delete(cropped)
                     pvs.Delete(sliced)
             if "U" in wanted:
                 def vortex_views():
-                    region = _pvvis_crop(base, [0, 0, 0], [1.35*diameter, 2.5*diameter, 1.35*diameter])
+                    region = base
                     point_data = pvs.CellDatatoPointData(Input=region)
                     point_data.ProcessAllArrays = 0
                     point_data.CellDataArraytoprocess = ["Q", "vorticity_magnitude"]
@@ -1268,12 +1282,11 @@ return velocity(data)
                             for camera in ("oblique", "xy"):
                                 _pvvis_attempt(result, run_dir, f"Q={threshold:g}, {camera}, t={t:g}", lambda: _pvvis_render(
                                     contour, result, settings, run_dir, view, f"Vortex structures - Q/omega^2 = {normalized_q:g}",
-                                    f"Q={threshold:.6g} s^-2, colored by vorticity magnitude. Camera fits the vortex geometry within the rotor/wake crop. Fixed Q/omega^2 thresholds expose threshold sensitivity; colors span the displayed isosurfaces and are fixed across phases and thresholds. Cells are interpolated to points for isosurfaces. Vortices are not acoustic source strength.",
+                                    f"Q={threshold:.6g} s^-2, colored by vorticity magnitude. Vortices are extracted across the entire domain; camera fits the resulting geometry. Fixed Q/omega^2 thresholds expose threshold sensitivity; colors span the displayed isosurfaces and are fixed across phases and thresholds. Cells are interpolated to points for isosurfaces. Vortices are not acoustic source strength.",
                                     camera=camera, field=("POINTS", "vorticity_magnitude", "Vorticity magnitude [1/s]"), limits=color_range, time_s=t))
                     finally:
                         pvs.Delete(contour)
                         pvs.Delete(point_data)
-                        pvs.Delete(region)
                 _pvvis_attempt(result, run_dir, f"Vortex views t={t:g}", vortex_views)
         _pvvis_attempt(result, run_dir, "Blade wall and section details", lambda: _pvvis_wall(
             marker, selected[-1][0], result, settings, run_dir, view, units, base=base))

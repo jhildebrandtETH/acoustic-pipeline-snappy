@@ -252,6 +252,14 @@ class VisualizationTests(unittest.TestCase):
                 self.assertFalse(flow.call_args.args[1]['mesh_only'])
                 self.assertEqual(surface.call_count, int(acoustic is not None))
 
+    def test_full_domain_views_survive_report_page_budget(self):
+        views = [{'title': f'Flow slice - {field} ({plane}, full domain)', 'time_s': t}
+                 for t in [1, 2] for plane in ['x=0', 'z=0'] for field in ['speed', 'p']]
+        views += [{'title': 'Flow slice - speed (rotor)', 'time_s': 2}]
+        selected = visualization.select_report_views(views, 2)
+        self.assertEqual(len(selected), 4)
+        self.assertTrue(all('full domain' in v['title'] and v['time_s'] == 2 for v in selected))
+
     def test_report_selection_keeps_distinct_quantities_and_latest_time(self):
         views = [{'title': f'Flow slice - {field} ({station})', 'time_s': t}
                  for t in [1, 2, 3] for station in ['x=0', 'y=0']

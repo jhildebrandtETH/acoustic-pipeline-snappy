@@ -9,7 +9,7 @@ import numpy as np
 
 from tools.acoustic_comparison import (
     agreement_metrics, cache_result, comparison_or_status, create_comparison, integrate_density,
-    load_channel, match_measurements, resolve_observer_position, validate_config, welch_density,
+    load_config, load_channel, match_measurements, resolve_observer_position, validate_config, welch_density,
 )
 
 
@@ -19,6 +19,46 @@ class AcousticComparisonTests(unittest.TestCase):
                     spectrum_bandwidth_hz=20.,
                     maximum_frequency_hz=3000., floor_db=-120.,
                     frequency_bins_hz=[[0, 1000], [1000, 2000], [2000, None]])
+
+    def test_case_configs_are_isolated_and_reread(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, channel in [('first', '1'), ('second', '6')]:
+                parameters = root / name / 'Parameters'
+                parameters.mkdir(parents=True)
+                (parameters / 'acousticComparison.json').write_text(json.dumps({'microphone_channel': channel}))
+            self.assertEqual(load_config(root / 'first')['microphone_channel'], '1')
+            self.assertEqual(load_config(root / 'second')['microphone_channel'], '6')
+            (root / 'first/Parameters/acousticComparison.json').write_text('{"microphone_channel": "3"}')
+            self.assertEqual(load_config(root / 'first')['microphone_channel'], '3')
+            self.assertEqual(load_config(root / 'second')['microphone_channel'], '6')
+
+    def test_missing_case_config_never_uses_source_defaults(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            case = Path(temporary)
+            with self.assertRaisesRegex(FileNotFoundError, 'Missing case acoustic config'):
+                load_config(case)
+            with self.assertRaisesRegex(FileNotFoundError, 'Missing case acoustic config'):
+                create_comparison(case)
+            status = comparison_or_status(case)
+            self.assertEqual(status['status'], 'unavailable')
+            self.assertIn(str(case / 'Parameters/acousticComparison.json'), status['detail'])
+
+    def test_alternate_config_must_belong_to_case(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case = root / 'case'
+            parameters = case / 'Parameters'
+            parameters.mkdir(parents=True)
+            alternate = parameters / 'alternate.json'
+            alternate.write_text('{"microphone_channel": "6"}')
+            external = root / 'external.json'
+            external.write_text('{"microphone_channel": "1"}')
+            self.assertEqual(load_config(case, 'alternate.json')['microphone_channel'], '6')
+            self.assertEqual(load_config(case, alternate)['microphone_channel'], '6')
+            for path in (external, '../../external.json'):
+                with self.assertRaisesRegex(ValueError, 'must be inside'):
+                    load_config(case, path)
 
     def test_area_identity_offset_and_partial_bins(self):
         edges = np.array([10., 900., 1500., 3000.])
@@ -71,7 +111,9 @@ class AcousticComparisonTests(unittest.TestCase):
             report.mkdir()
             np.savez(report / 'acoustic-pressure.npz', pressure_pa=trace * np.sqrt(2.5),
                      sampling_frequency_hz=rate, geometry='10x7e', rpm=4000., observer_m=[1., 0., 0.])
-            result = create_comparison(root, self.config(root))
+            (root / 'Parameters').mkdir()
+            (root / 'Parameters/acousticComparison.json').write_text(json.dumps(self.config(root)))
+            result = create_comparison(root)
             self.assertAlmostEqual(result['band_limited_level_difference_db'], 0., places=8)
             self.assertTrue(result['positions_match'])
             self.assertAlmostEqual(result['segment_duration_s'], len(trace) / rate)

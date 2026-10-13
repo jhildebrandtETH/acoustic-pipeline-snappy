@@ -7,7 +7,22 @@ comparison settings change and `report/acoustic-pressure.npz` already exists.
 
 ## Settings
 
-Edit `Parameters/acousticComparison.json`:
+Edit `<case>/Parameters/acousticComparison.json`. Repository `Parameters` seed
+new cases only. Existing cases read their own copy, including when rebuilding
+reports from cached pressure. A missing case config is an explicit error; there
+is no fallback to the source folder.
+
+Settings are loaded when the acoustic stage starts and kept consistent for that
+propagation and comparison. Edit the case file before that stage begins. Changes
+during propagation take effect on the next acoustic run or report rebuild, not
+halfway through the current calculation. Changing the microphone requires a new
+acoustic run; changing comparison bins only requires a report rebuild.
+
+Other case parameters are also consumed by their corresponding stages. Generated
+mesh settings require remeshing; this does not make every parameter hot-reloadable.
+OpenFOAM runtime rereading remains governed by its dictionaries and supported controls.
+
+Settings:
 
 - `measurements_directory`: recursively searched measurement folder. Set to null
   to disable comparison. The initial value is the supplied local Measurements folder.
@@ -69,7 +84,8 @@ python -m tools.acoustic_comparison "path/to/10x7e_4000RPM_case"
 ```
 
 Override the measurement directory with `--measurements "path/to/Measurements"`
-or supply another JSON file with `--config "path/to/settings.json"`.
+or select another JSON file inside the case Parameters folder with
+`--config "settings.json"`. External config paths are rejected.
 This produces a standalone `report/acoustic-comparison.pdf`. Regenerating the full
 simulation report afterwards embeds the updated comparison pages.
 
