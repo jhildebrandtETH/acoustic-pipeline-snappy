@@ -26,7 +26,7 @@ class SnappyTests(unittest.TestCase):
                                       study=('snappyGeometry.json','scale','0.001'))
                 data = json.loads((case/'mesh/geometry.json').read_text())
                 self.assertAlmostEqual(data['diameter_m'], .16)
-                self.assertTrue(data['layers'])
+                self.assertEqual(data['layers'], mesh.configured_layers(case))
                 self.assertTrue((case/'constant/triSurface/permeableSurface.stl').is_file())
                 self.assertEqual(data['acoustic_sphere_radius_m'] is None, acoustic != 'permeable')
                 self.assertIn('locationInMesh', (case/'Parameters/snappyGeometry.generated').read_text())
@@ -89,6 +89,10 @@ class SnappyTests(unittest.TestCase):
             if cores>1:
                 self.assertLess(names.index('reconstructPar'),names.index('createNonConformalCouples'))
                 self.assertIn(['reconstructPar','-constant','-noFields'],commands)
+            self.assertIn(['splitBaffles', '-overwrite'], commands)
+            self.assertLess(names.index('splitBaffles'), names.index('createNonConformalCouples'))
+            if cores > 1:
+                self.assertLess(names.index('reconstructPar'), names.index('splitBaffles'))
             self.assertIn(['createNonConformalCouples','-fields','rotaryRegion_slave','rotaryRegion'],commands)
 
     def test_quality_gate_and_override(self):

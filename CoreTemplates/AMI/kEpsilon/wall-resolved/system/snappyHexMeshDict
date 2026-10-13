@@ -99,6 +99,12 @@ castellatedMeshControls
     (
         #includeIfPresent "../Parameters/snappyFeatures.generated"
 
+        // Keep both sides of the rotor interface on the cylinder rims.
+        {
+            file        "rotaryCylinder.eMesh";
+            level       3;
+        }
+
         {
             file        "propeller.eMesh";
             level       4;
@@ -112,7 +118,9 @@ castellatedMeshControls
         {
             level       $rotaryRegionSurfaceRefinementLevel;
          
-            faceType    boundary;
+            // Preserve matching interface geometry while snapping.
+            // The pipeline splits shared points before NCC coupling.
+            faceType    baffle;
             cellZone    rotaryRegion;
             faceZone    rotaryRegion;
             cellZoneInside  inside;

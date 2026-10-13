@@ -1,5 +1,8 @@
 import json
 import math
+import shutil
+
+from tools.acoustic_comparison import cache_result, comparison_or_status, load_config, resolve_observer_position
 
 from tools.plotting import pyplot as plt
 import torch
@@ -11,12 +14,27 @@ from tools import create_reference_geometry_vtk_series
 from tools import emit_status
 
 
+# One analysis-window setting for both comparison and simulation-only spectra.
+ACOUSTIC_ANALYSIS_ROTATIONS = 15.0
+
+
 def run_acoustic_solver(
     ACOUSTIC_SURFACE,
     SIMULATION_WORKING_DIRECTORY,
     RPM,
     STATUS_CALLBACK=None,
 ):
+    comparison_status = SIMULATION_WORKING_DIRECTORY / "report/acoustic-comparison.json"
+    comparison_status.parent.mkdir(parents=True, exist_ok=True)
+    (comparison_status.parent / "acoustic-pressure.npz").unlink(missing_ok=True)
+    comparison_status.write_text(json.dumps({"status": "unavailable", "detail": "No comparison from the current acoustic run yet."}))
+    comparison_config = load_config()
+    try:
+        observer_coordinates = resolve_observer_position(SIMULATION_WORKING_DIRECTORY, RPM, comparison_config)
+    except Exception as exc:
+        comparison_status.write_text(json.dumps({"status": "unavailable", "detail": str(exc)}, indent=2))
+        raise
+    print(f"Acoustic observer for microphone {comparison_config.get('microphone_channel')}: {observer_coordinates} m", flush=True)
     emit_status(
         STATUS_CALLBACK,
         stage="acoustics",
@@ -119,7 +137,7 @@ def run_acoustic_solver(
         cache_dir=SIMULATION_WORKING_DIRECTORY / ".cache" / cache_name,
     )
 
-    observer_m = torch.tensor([1.0, 0.0, 0.0], device=device)
+    observer_m = torch.tensor(observer_coordinates, device=device)
 
     emit_status(
         STATUS_CALLBACK,
@@ -141,15 +159,25 @@ def run_acoustic_solver(
         detail="creating SPL spectrum",
         progress=85.0,
     )
-    with MATPLOTLIB_LOCK:
-        ax = plot_spl_spectrum(
-            result,
-            rotations=15.0,
-            blade_count=2,
-        )
-        fig = ax.figure if hasattr(ax, "figure") else plt.gcf()
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        plt.close(fig)
+    try:
+        cache_result(result, SIMULATION_WORKING_DIRECTORY, RPM, rotations=ACOUSTIC_ANALYSIS_ROTATIONS)
+        comparison = comparison_or_status(SIMULATION_WORKING_DIRECTORY, comparison_config)
+    except Exception as exc:
+        comparison = {"status": "unavailable", "detail": str(exc)}
+        comparison_status.write_text(json.dumps(comparison, indent=2))
+    if comparison["status"] == "complete":
+        shutil.copyfile(output_path.parent / "acoustic-simulated.png", output_path)
+    else:
+        print(f"Acoustic comparison unavailable: {comparison['detail']}", flush=True)
+        with MATPLOTLIB_LOCK:
+            available_rotations = (float(result.observer_times_s[-1]) - float(result.maximum_delay_s)) * RPM / 60
+            ax = plot_spl_spectrum(
+                result, rotations=min(ACOUSTIC_ANALYSIS_ROTATIONS, available_rotations * 0.999),
+                blade_count=2, xlim_hz=(None, None),
+            )
+            fig = ax.axes[0].figure if hasattr(ax, "axes") and isinstance(ax.axes, tuple) else ax.figure
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
 
     status_path.write_text(
         json.dumps(

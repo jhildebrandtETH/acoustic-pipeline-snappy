@@ -1,1 +1,1 @@
-blocks_resolution (10 30 10); // 16 48 16
+blocks_resolution (16 48 16);

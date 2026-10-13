@@ -226,6 +226,8 @@ def run_mesh(container, case, cores, allow_bad, callback=None, live=False):
         run(['reconstructPar', '-constant', '-noFields'], 'log.reconstructParMesh')
     else:
         run(['snappyHexMesh', '-overwrite'], 'log.snappyHexMesh')
+    # Keep interface points shared through snapping, then release rotor motion.
+    run(['splitBaffles', '-overwrite'], 'log.splitBaffles')
     return finish_rotor_mesh(container,case,allow_bad,callback,live)
 
 

@@ -574,7 +574,15 @@ def create_simulation_report(
         / "spl_spectrum.png"
     )
 
-    if not aerodynamics_only:
+    comparison_file = report_dir / "acoustic-comparison.json"
+    comparison_ready = False
+    if comparison_file.is_file():
+        try:
+            comparison_ready = json.loads(comparison_file.read_text(encoding="utf-8")).get("status") == "complete"
+        except (ValueError, OSError):
+            pass
+
+    if not aerodynamics_only and not comparison_ready:
         # A Path object is never None, so check whether the PNG really exists.
         # The page is still created when the file is missing or unreadable so the
         # report clearly shows why the acoustic figure was not embedded.
@@ -626,6 +634,10 @@ def create_simulation_report(
             else:
                 c.drawString(50, h - 110, "Acoustic spectrum image was not found.")
                 c.drawString(50, h - 128, f"Expected file: {acoustic_plot}"[:95])
+
+    if not aerodynamics_only:
+        from tools.acoustic_comparison import append_comparison_report
+        append_comparison_report(c, case_path)
 
     progress('embedding visualization images', 95)
     visualization_summary = append_visualization_report(c, case_path, mesh_only=False)

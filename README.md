@@ -69,7 +69,7 @@ For a non-rotating input case with its own system dictionaries and triSurface ge
 python main.py --mesh-case /path/to/input-case --sim-dir output/simple-case --mesh-only
 ```
 
-This serial workflow respects the supplied case’s layer settings, checks the mesh and creates a PDF report. Add `--mesh-native` to use a locally sourced OpenFOAM 13 installation.
+This serial workflow respects the supplied caseï¿½s layer settings, checks the mesh and creates a PDF report. Add `--mesh-native` to use a locally sourced OpenFOAM 13 installation.
 
 ## Validation
 
@@ -154,3 +154,7 @@ Use exactly two thickness controls from expansion ratio, first-layer thickness,
 final-layer thickness and total thickness. See the [OpenFOAM 13 layer controls](https://doc.cfd.direct/openfoam/user-guide-v13/snappyhexmesh).
 Already prepared cases keep their copied parameters; edit the case copy or start
 a fresh order. A completed mesh is not regenerated merely by resuming an order.
+
+## Experimental acoustic agreement
+
+The acoustic stage compares matching experimental geometry/RPM recordings with the simulated observer pressure. Configure the measurement folder, microphone channel and frequency bins in Parameters/acousticComparison.json. See [the acoustic comparison guide](Parameters/acoustic-comparison.md) for metrics, assumptions and regenerating reports without rerunning CFD.

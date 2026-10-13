@@ -1,6 +1,6 @@
 castellatedMesh true;
 snap true;
-addLayers true; // Set false to mesh without native snappy inflation layers.
+addLayers false; // Set false to mesh without native snappy inflation layers.
 
 maxLocalCells 100000;
 maxGlobalCells 3000000;
@@ -10,10 +10,10 @@ nCellsBetweenLevels 3;
 
 rotaryRegionSurfaceRefinementLevel (3 3);
 
-propellerSurfaceRefinementLevel (4 4); // Uniform propeller surface refinement.
+propellerSurfaceRefinementLevel (6 6); // Uniform propeller surface refinement.
 
 propellerRefinementRegionMode distance;
-propellerRefinementRegionLevel ((0.0045 4) (0.0125 4));
+propellerRefinementRegionLevel ((0.0045 6) (0.0125 5));
 
 rotaryRegionRefinementRegionMode inside;
 rotaryRegionRefinementRegionLevel ((1E15 3));
@@ -56,12 +56,12 @@ addLayersControls
     {
         propeller
         {
-            nSurfaceLayers 3;
+            nSurfaceLayers 1;
         }
     }
     expansionRatio 1.2;
-    finalLayerThickness 0.3;
-    minThickness 1.0;
+    finalLayerThickness 2e-3;
+    minThickness 2e-3;
     nGrow 0;
     featureAngle 60;
     slipFeatureAngle 30;

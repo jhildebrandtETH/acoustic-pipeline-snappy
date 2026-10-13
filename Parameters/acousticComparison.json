@@ -1,0 +1,21 @@
+{
+  "measurements_directory": "C:/Users/jonas/Downloads/Measurements/Measurements",
+  "microphone_channel": "1",
+  "frequency_bins_hz": [
+    [
+      0,
+      1000
+    ],
+    [
+      1000,
+      4000
+    ],
+    [
+      4000,
+      null
+    ]
+  ],
+  "spectrum_bandwidth_hz": 20.0,
+  "maximum_frequency_hz": 12000.0,
+  "floor_db": -120.0
+}
