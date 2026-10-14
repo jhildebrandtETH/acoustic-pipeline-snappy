@@ -126,8 +126,15 @@ class AcousticComparisonTests(unittest.TestCase):
                 self.assertTrue((report / name).is_file())
             from reportlab.pdfgen.canvas import Canvas
             from tools.acoustic_comparison import append_comparison_report
-            canvas = Canvas(str(report / 'test-report.pdf'))
+            class ReportCanvas(Canvas):
+                images = []
+                def drawImage(self, image, *args, **kwargs):
+                    self.images.append(Path(image).name)
+                    return super().drawImage(image, *args, **kwargs)
+            canvas = ReportCanvas(str(report / 'test-report.pdf'))
             append_comparison_report(canvas, root)
+            self.assertEqual(canvas.images, ['acoustic-psd-overlay.png', 'acoustic-tonal-simulated.png', 'acoustic-tonal-measured.png'])
+            self.assertEqual(canvas.getPageNumber(), 3)
             canvas.save()
             for name in ['acoustic-simulated.png', 'acoustic-measured.png', 'acoustic-overlay.png', 'acoustic-comparison.csv']:
                 self.assertTrue((report / name).is_file())

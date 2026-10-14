@@ -297,6 +297,8 @@ def create_comparison(case_path, config=None):
     metadata['tonal_analysis'] = write_tonal_figures(
         report, {'simulated': [(sim_f, sim_psd)], 'measured': spectra},
         metadata, config, low, high)
+    from tools.acoustic_summary import plot_psd_overlay
+    plot_psd_overlay(report, spectra, metadata)
     plot_comparison(report, edges, sim_db, exp_db, repeat_db, metadata)
     np.savetxt(report / 'acoustic-comparison.csv', np.c_[edges[:-1], edges[1:], sim_db, exp_db, sim_db - exp_db],
                delimiter=',', header='lower_hz,upper_hz,simulated_spl_db,measured_spl_db,difference_db', comments='')
@@ -357,75 +359,9 @@ def plot_comparison(report, edges, simulated, measured, repeats, metadata):
 
 
 def append_comparison_report(canvas, case_path):
-    """Append three spectrum pages and a paginated metrics/provenance section."""
-    from reportlab.lib.utils import simpleSplit
-    from tools.acoustic_directivity import append_directivity_report
-    append_directivity_report(canvas, case_path)
-    report = Path(case_path) / 'report'
-    path = report / 'acoustic-comparison.json'
-    if not path.exists():
-        return
-    data = json.loads(path.read_text(encoding='utf-8'))
-    width, height = canvas._pagesize
-    def page(title):
-        if canvas._code:
-            canvas.showPage()
-        canvas.setFont('Helvetica-Bold', 17)
-        canvas.drawString(45, height - 50, title)
-        canvas.setFont('Helvetica', 10)
-    if data['status'] != 'complete':
-        page('Acoustic comparison unavailable')
-        for index, line in enumerate(simpleSplit(data.get('detail', ''), 'Helvetica', 10, width - 90)):
-            canvas.drawString(45, height - 85 - index * 15, line)
-        return
-    for kind, title in [('simulated', 'Simulated SPL'), ('measured', 'Experimental SPL'), ('overlay', 'Simulated vs experimental SPL')]:
-        page(title)
-        canvas.drawImage(str(report / f'acoustic-{kind}.png'), 30, height - 365, width=width - 60, height=280, preserveAspectRatio=True)
-        canvas.drawString(45, height - 390, f"Common evaluated range: {data['overall']['covered_hz'][0]:.1f} - {data['overall']['covered_hz'][1]:.1f} Hz")
-        canvas.drawString(45, height - 410, f"Simulation position: {data['observer_m']} m; microphone: {data['microphone_position_m']} m")
-    for kind in data.get('tonal_analysis', {}).get('spectra', {}):
-        page(f"Estimated tonal / broadband SPL - {kind}")
-        canvas.drawImage(str(report / f'acoustic-tonal-{kind}.png'), 30, height - 430,
-                         width=width - 60, height=350, preserveAspectRatio=True)
-        canvas.drawString(45, height - 455, 'Separation is threshold- and resolution-dependent; no motor subtraction.')
-    page('Acoustic agreement metrics')
-    y = height - 85
-    def line(text, bold=False):
-        nonlocal y
-        font = 'Helvetica-Bold' if bold else 'Helvetica'
-        # Split long paths as well as prose to keep every provenance line on-page.
-        parts = []
-        for paragraph in simpleSplit(text, font, 10, width - 90):
-            current = ''
-            for char in paragraph:
-                if canvas.stringWidth(current + char, font, 10) > width - 90:
-                    parts.append(current)
-                    current = ''
-                current += char
-            parts.append(current)
-        for part in parts:
-            if y < 55:
-                page('Acoustic agreement - continued')
-                y = height - 85
-            canvas.setFont(font, 10)
-            canvas.drawString(45, y, part)
-            y -= 15
-        y -= 5
-    line('Mean absolute difference = shaded area / evaluated frequency width. Zero is perfect; lower is better.', True)
-    for name, row in [('Overall', data['overall'])] + [(f'Bin {i + 1}', row) for i, row in enumerate(data['bins'])]:
-        if row['status'] != 'complete':
-            line(f"{name}: unavailable (outside common coverage)")
-            continue
-        lo, hi = row['covered_hz']
-        line(f"{name}: {lo:.1f}-{hi:.1f} Hz | mean difference {row['mae_db']:.2f} dB | area {row['area_db_hz']:.1f} dB Hz", True)
-        line(f"RMSE {row['rmse_db']:.2f} dB; signed bias {row['bias_db']:+.2f} dB (positive = simulation louder).")
-    line(f"Band-limited total SPL: simulation {data['simulated_band_limited_spl_db']:.2f} dB; experimental {data['measured_band_limited_spl_db']:.2f} dB; difference {data['band_limited_level_difference_db']:+.2f} dB.")
-    line(f"Processing: periodic Hann, 50% overlap, mean removed per segment; segment {data['segment_duration_s']:.5f} s; nominal narrow-band width {data['nominal_bandwidth_hz']:.2f} Hz; numerical floor {data['floor_db']:g} dB.")
-    for warning in data['warnings']:
-        line(warning)
-    line('Experimental files (equal weight in linear acoustic energy):', True)
-    for filename in data['measurement_files']:
-        line(filename)
+    """Append one PSD comparison/table, tonal figures and available polar plots."""
+    from tools.acoustic_summary import append_summary
+    append_summary(canvas, case_path)
 
 
 def comparison_or_status(case_path, config=None):

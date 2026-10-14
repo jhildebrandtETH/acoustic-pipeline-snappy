@@ -20,7 +20,7 @@
   "floor_db": -120.0,
   "blade_count": 2,
   "directivity": {
-    "enabled": false,
+    "enabled": true,
     "experimental_rotation_center_m": null,
     "simulation_rotation_center_m": [0, 0, 0],
     "experimental_to_simulation_rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],

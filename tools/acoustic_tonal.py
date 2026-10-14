@@ -153,7 +153,13 @@ def write_tonal_figures(report, groups, metadata, config, low, high):
             ax.set(xscale='log', xlim=(low, high), xlabel='Frequency [Hz]',
                    ylabel='PSD [dB re (20 µPa)²/Hz]', facecolor='#f0f0f0')
             ax.plot(grid, levels(background, floor), color='#247eaf', lw=2.5, label='Estimated broadband PSD')
-            ax.plot(grid, levels(original, floor), color='#202020', ls=':', lw=1.1, label='Original PSD')
+            ax.plot(grid, levels(original, floor), color='#202020', ls=':', lw=1.1,
+                    label='Total simulated PSD' if kind == 'simulated' else 'Total experimental PSD')
+            ax.fill_between(grid, levels(background, floor), levels(original, floor),
+                            where=tonal > 0, color='#c73546', alpha=.22, interpolate=True)
+            ax.vlines(detected, levels(np.interp(detected, grid, background), floor),
+                      levels(np.interp(detected, grid, original), floor),
+                      color='#b92335', lw=.85, alpha=.8, zorder=3)
             for selected, label, filled in [(harmonic, 'Detected BPF harmonics', True),
                                              (~harmonic, 'Other detected tones', False)]:
                 positions = detected[selected]
