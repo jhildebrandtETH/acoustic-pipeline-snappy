@@ -255,6 +255,57 @@ def plot_directivity(report, summary):
             fig.savefig(Path(report) / filename, dpi=160)
             plt.close(fig)
             plane['figure'] = filename
+        plane['comparison_figures'] = plot_component_comparisons(report, summary, plane, index, limits, maximum_gap)
+
+
+def plot_component_comparisons(report, summary, plane, index, limits, maximum_gap):
+    """Overlay simulation and experiment separately for each integrated SPL."""
+    from tools.plotting import pyplot as plt
+    from tools import MATPLOTLIB_LOCK
+    figures = {}
+    angles = np.asarray(plane['angles_deg'])
+    for component in ('overall', 'broadband', 'tonal'):
+        with MATPLOTLIB_LOCK:
+            fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={'projection': 'polar'})
+            fig.subplots_adjust(left=.12, right=.88, top=.82, bottom=.23)
+            fig.suptitle(f'{component.capitalize()} SPL — simulation / experiment', fontsize=15, y=.97)
+            fig.text(.5, .91, f"{summary['geometry']} | {summary['rpm']:g} RPM | {plane['name']}", ha='center', fontsize=10)
+            ax.set_ylim(*limits)
+            if np.all(angles <= 180 + 1e-6):
+                ax.set_thetamin(0)
+                ax.set_thetamax(180)
+            for kind, label, color, style, marker in (
+                ('simulated', 'Simulation', '#2463a6', '-', 'o'),
+                ('measured', 'Experiment', '#c73546', '--', 's'),
+            ):
+                x, y = [], []
+                for i, (angle, channel) in enumerate(zip(angles, plane['channels'])):
+                    if i and angle - angles[i - 1] > maximum_gap:
+                        x.append(np.nan); y.append(np.nan)
+                    value = summary['channels'][channel][kind][component + '_spl_db']
+                    x.append(np.radians(angle)); y.append(value if value is not None else np.nan)
+                ax.plot(x, y, color=color, ls=style, lw=2, marker=marker, ms=5,
+                        markerfacecolor=color if kind == 'simulated' else 'white', label=label)
+            for angle, channel in zip(angles, plane['channels']):
+                values = [summary['channels'][channel][kind][component + '_spl_db'] for kind in ('simulated', 'measured')]
+                valid = [value for value in values if value is not None and np.isfinite(value)]
+                if valid:
+                    ax.annotate('M' + channel, (np.radians(angle), max(valid)), xytext=(0, 10),
+                                textcoords='offset points', ha='center', fontsize=9)
+            ax.set_rlabel_position(0)
+            ax.grid(alpha=.4)
+            fig.legend(*ax.get_legend_handles_labels(), loc='upper center', bbox_to_anchor=(.5, .87), ncol=2, frameon=False)
+            fig.text(.5, .19, 'SPL [dB re 20 µPa] | %.1f–%.1f Hz' % tuple(summary['covered_hz']), ha='center', fontsize=10)
+            fig.text(.5, .14, f"Microphone radii {min(plane['radii_m']):.3f}–{max(plane['radii_m']):.3f} m; no distance normalization", ha='center', fontsize=9)
+            fig.text(.5, .10, 'Same radial scale across all components; lines only guide the eye.', ha='center', fontsize=9)
+            if component != 'overall':
+                fig.text(.5, .065, 'Tonal / broadband separation is estimated.', ha='center', fontsize=9)
+            fig.text(.5, .025, f"0°: {plane['zero_direction']}; 90°: {plane['positive_direction']} (experimental axes)", ha='center', fontsize=8)
+            filename = f'acoustic-directivity-plane-{index + 1}-{component}.png'
+            fig.savefig(Path(report) / filename, dpi=160)
+            plt.close(fig)
+            figures[component] = filename
+    return figures
 
 
 def directivity_or_status(case, config):
@@ -293,3 +344,9 @@ def append_directivity_report(canvas, case):
         canvas.setFont('Helvetica-Bold', 16)
         canvas.drawString(40, height - 50, 'Multi-observer acoustic directivity')
         canvas.drawImage(str(path.parent / plane['figure']), 25, height - 400, width=width - 50, height=310, preserveAspectRatio=True)
+        for component, filename in plane.get('comparison_figures', {}).items():
+            canvas.showPage()
+            canvas.setFont('Helvetica-Bold', 16)
+            canvas.drawString(40, height - 50, f'{component.capitalize()} SPL: simulation / experiment')
+            canvas.drawImage(str(path.parent / filename), 25, height - 510,
+                             width=width - 50, height=420, preserveAspectRatio=True)

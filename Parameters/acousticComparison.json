@@ -21,7 +21,7 @@
   "blade_count": 2,
   "directivity": {
     "enabled": true,
-    "experimental_rotation_center_m": null,
+    "experimental_rotation_center_m": [0, 0, 0],
     "simulation_rotation_center_m": [0, 0, 0],
     "experimental_to_simulation_rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
     "microphone_positions_m": {},

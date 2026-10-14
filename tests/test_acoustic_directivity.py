@@ -107,8 +107,12 @@ class DirectivityTests(unittest.TestCase):
                     power = row[kind]['power_pa2']
                     self.assertAlmostEqual(power['overall'], power['tonal'] + power['broadband'])
             self.assertTrue((case / 'report/acoustic-directivity-plane-1.png').exists())
+            self.assertEqual(set(result['planes'][0]['comparison_figures']), {'overall', 'broadband', 'tonal'})
+            for filename in result['planes'][0]['comparison_figures'].values():
+                self.assertTrue((case / 'report' / filename).is_file())
             canvas = Canvas(str(case / 'report/directivity.pdf'))
             append_directivity_report(canvas, case)
+            self.assertEqual(canvas.getPageNumber(), 4)
             canvas.save()
             config['directivity']['planes'][0]['channels'].append('2')
             failed = directivity_or_status(case, config)
