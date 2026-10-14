@@ -119,6 +119,16 @@ class AcousticComparisonTests(unittest.TestCase):
             self.assertAlmostEqual(result['segment_duration_s'], len(trace) / rate)
             self.assertAlmostEqual(result['fft_spacing_hz'], rate / len(trace))
             self.assertEqual(result['repeat_count'], 2)
+            tonal = result['tonal_analysis']['spectra']
+            self.assertAlmostEqual(tonal['simulated']['overall_spl_db'], result['simulated_band_limited_spl_db'])
+            self.assertAlmostEqual(tonal['measured']['overall_spl_db'], result['measured_band_limited_spl_db'])
+            for name in ['acoustic-tonal-simulated.png', 'acoustic-tonal-measured.png', 'acoustic-tonal.json']:
+                self.assertTrue((report / name).is_file())
+            from reportlab.pdfgen.canvas import Canvas
+            from tools.acoustic_comparison import append_comparison_report
+            canvas = Canvas(str(report / 'test-report.pdf'))
+            append_comparison_report(canvas, root)
+            canvas.save()
             for name in ['acoustic-simulated.png', 'acoustic-measured.png', 'acoustic-overlay.png', 'acoustic-comparison.csv']:
                 self.assertTrue((report / name).is_file())
             (report / 'acoustic-pressure.npz').unlink()

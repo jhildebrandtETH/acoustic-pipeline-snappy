@@ -635,6 +635,13 @@ def create_simulation_report(
                 c.drawString(50, h - 110, "Acoustic spectrum image was not found.")
                 c.drawString(50, h - 128, f"Expected file: {acoustic_plot}"[:95])
 
+    tonal_plot = report_dir / 'acoustic-tonal-simulated.png'
+    if not aerodynamics_only and not comparison_ready and acoustic_plot.is_file() and tonal_plot.is_file():
+        c.showPage()
+        c.setFont('Helvetica-Bold', 16)
+        c.drawString(50, h - 50, 'Estimated tonal / broadband SPL')
+        c.drawImage(str(tonal_plot), 30, h - 430, width=w - 60, height=350, preserveAspectRatio=True)
+
     if not aerodynamics_only:
         from tools.acoustic_comparison import append_comparison_report
         append_comparison_report(c, case_path)

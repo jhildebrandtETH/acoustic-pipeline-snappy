@@ -3,6 +3,7 @@ import math
 import shutil
 
 from tools.acoustic_comparison import cache_result, comparison_or_status, load_config, resolve_observer_position
+from tools.acoustic_directivity import settings as directivity_settings, frame, resolve_observers, cache_observers
 
 from tools.plotting import pyplot as plt
 import torch
@@ -27,14 +28,21 @@ def run_acoustic_solver(
     comparison_status = SIMULATION_WORKING_DIRECTORY / "report/acoustic-comparison.json"
     comparison_status.parent.mkdir(parents=True, exist_ok=True)
     (comparison_status.parent / "acoustic-pressure.npz").unlink(missing_ok=True)
+    (comparison_status.parent / "acoustic-observers.npz").unlink(missing_ok=True)
+    (comparison_status.parent / "acoustic-directivity.json").write_text(json.dumps(
+        {"status": "unavailable", "detail": "No directivity from the current acoustic run yet."}))
     comparison_status.write_text(json.dumps({"status": "unavailable", "detail": "No comparison from the current acoustic run yet."}))
     try:
         comparison_config = load_config(SIMULATION_WORKING_DIRECTORY)
-        observer_coordinates = resolve_observer_position(SIMULATION_WORKING_DIRECTORY, RPM, comparison_config)
+        multiple = directivity_settings(comparison_config).get('enabled', False)
+        if multiple:
+            channels, raw_positions, observer_coordinates = resolve_observers(SIMULATION_WORKING_DIRECTORY, RPM, comparison_config)
+        else:
+            observer_coordinates = resolve_observer_position(SIMULATION_WORKING_DIRECTORY, RPM, comparison_config)
     except Exception as exc:
         comparison_status.write_text(json.dumps({"status": "unavailable", "detail": str(exc)}, indent=2))
         raise
-    print(f"Acoustic observer for microphone {comparison_config.get('microphone_channel')}: {observer_coordinates} m", flush=True)
+    print(f"Acoustic observers ({len(channels) if multiple else 1}); spectrum channel {comparison_config.get('microphone_channel')}: {observer_coordinates} m", flush=True)
     emit_status(
         STATUS_CALLBACK,
         stage="acoustics",
@@ -131,7 +139,7 @@ def run_acoustic_solver(
         permeable=permeable,
         # The sampled permeable sphere is fixed in the inertial frame.
         moving_surface=not permeable,
-        rotation_center_m=[0.0, 0.0, 0.0],
+        rotation_center_m=frame(comparison_config)[1].tolist() if multiple else [0.0, 0.0, 0.0],
         omega_rad_s=[0.0, omega_rad_s if not permeable else 0.0, 0.0],
         device=device,
         cache_dir=SIMULATION_WORKING_DIRECTORY / ".cache" / cache_name,
@@ -142,10 +150,13 @@ def run_acoustic_solver(
     emit_status(
         STATUS_CALLBACK,
         stage="acoustics",
-        detail="predicting observer pressure",
+        detail=f"predicting pressure at {len(channels) if multiple else 1} observer(s)",
         progress=55.0,
     )
     result = solver.predict(observer_m)
+    multi_result = result if multiple else None
+    if multiple:
+        result = multi_result.for_observer(channels.index(str(comparison_config['microphone_channel'])))
 
     output_path = SIMULATION_WORKING_DIRECTORY / "report" / "spl_spectrum.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -160,8 +171,15 @@ def run_acoustic_solver(
         progress=85.0,
     )
     try:
-        cache_result(result, SIMULATION_WORKING_DIRECTORY, RPM, rotations=ACOUSTIC_ANALYSIS_ROTATIONS)
+        if multiple:
+            cache_observers(multi_result, SIMULATION_WORKING_DIRECTORY, RPM, comparison_config,
+                            channels, raw_positions, rotations=ACOUSTIC_ANALYSIS_ROTATIONS)
+        else:
+            cache_result(result, SIMULATION_WORKING_DIRECTORY, RPM, rotations=ACOUSTIC_ANALYSIS_ROTATIONS)
         comparison = comparison_or_status(SIMULATION_WORKING_DIRECTORY, comparison_config)
+        if comparison['status'] != 'complete':
+            from tools.acoustic_tonal import write_cached_simulation_tonal
+            write_cached_simulation_tonal(SIMULATION_WORKING_DIRECTORY, comparison_config)
     except Exception as exc:
         comparison = {"status": "unavailable", "detail": str(exc)}
         comparison_status.write_text(json.dumps(comparison, indent=2))
@@ -199,6 +217,8 @@ def run_acoustic_solver(
                 "sample_count": len(sample_times),
                 "sampled_duration_s": sampled_duration,
                 "spectrum": str(output_path),
+                "observer_count": len(channels) if multiple else 1,
+                "spectrum_channel": str(comparison_config['microphone_channel']),
             },
             indent=2,
         )

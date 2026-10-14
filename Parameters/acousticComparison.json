@@ -18,5 +18,27 @@
   "spectrum_bandwidth_hz": 20.0,
   "maximum_frequency_hz": 12000.0,
   "floor_db": -120.0,
-  "blade_count": 2
+  "blade_count": 2,
+  "directivity": {
+    "enabled": false,
+    "experimental_rotation_center_m": null,
+    "simulation_rotation_center_m": [0, 0, 0],
+    "experimental_to_simulation_rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    "microphone_positions_m": {},
+    "plane_tolerance_m": 0.005,
+    "maximum_connected_gap_deg": 60,
+    "planes": [
+      {
+        "name": "M1-M8-M10-M6 plane",
+        "channels": ["1", "8", "10", "6"],
+        "zero_direction": [1, 0, 0],
+        "positive_direction": [0, 0, 1]
+      }
+    ]
+  },
+  "tonal_analysis": {
+    "median_window_bins": 21,
+    "threshold_db": 8.0,
+    "half_width_bins": 2
+  }
 }

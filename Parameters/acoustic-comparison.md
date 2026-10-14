@@ -133,3 +133,5 @@ Bins without coverage are unavailable, not zero error.
 Assumptions: calibrated pressure in Pa, unweighted spectra, consistent microphone
 and observer coordinates, no background-noise subtraction. Broadband discrepancies
 can dominate the area; a separate tonal/BPF metric may be useful in future.
+
+Additional [tonal/broadband figures](acoustic-tonal.md) now show estimated tonal, broadband and overall SPL, with configurable separation settings.

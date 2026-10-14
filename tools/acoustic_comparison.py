@@ -48,6 +48,10 @@ def resolve_observer_position(case_path, rpm, config):
     With measurements configured, missing or inconsistent positions are errors:
     never silently simulate another point or use a stale manual observer setting.
     """
+    from tools.acoustic_directivity import settings, resolve_observers
+    if settings(config).get('enabled', False):
+        channels, _, positions = resolve_observers(case_path, rpm, config)
+        return positions[channels.index(str(config['microphone_channel']))].tolist()
     if not config.get('measurements_directory'):
         return [1.0, 0.0, 0.0]
     geometry = case_geometry(case_path)
@@ -194,6 +198,8 @@ def agreement_metrics(edges, simulated_db, measured_db, bins):
 
 
 def validate_config(config):
+    from tools.acoustic_tonal import tonal_settings
+    tonal_settings(config)
     for name in ('spectrum_bandwidth_hz', 'maximum_frequency_hz'):
         if not np.isfinite(config[name]) or config[name] <= 0:
             raise ValueError(f'{name} must be positive and finite')
@@ -216,6 +222,9 @@ def create_comparison(case_path, config=None):
     """Read cached simulation, select all matching repeats, write plots and metrics."""
     config = load_config(case_path) if config is None else config
     validate_config(config)
+    from tools.acoustic_directivity import settings, select_cached_observer, transform_position
+    if settings(config).get('enabled', False):
+        select_cached_observer(case_path, config)
     report = Path(case_path) / 'report'
     with np.load(report / 'acoustic-pressure.npz', allow_pickle=False) as data:
         pressure, fs = data['pressure_pa'], float(data['sampling_frequency_hz'])
@@ -232,6 +241,7 @@ def create_comparison(case_path, config=None):
     spectra, positions = [], []
     for path in paths:
         trace, rate, position = load_channel(path, config['microphone_channel'], geometry, rpm)
+        position = transform_position(position, config['microphone_channel'], config)
         frequency, density = welch_density(trace, rate, duration)
         spectra.append((frequency, density))
         positions.append(position.tolist())
@@ -254,7 +264,9 @@ def create_comparison(case_path, config=None):
     overall, bins = agreement_metrics(edges, sim_db, exp_db, config['frequency_bins_hz'])
     warnings = [
         'Pressure is assumed calibrated in Pa, unweighted; no background-noise correction is applied.',
-        'Coordinates are used as supplied, with origin at the propeller centre and rotation about y.',
+        ('Microphone coordinates use the configured experimental-to-simulation mapping; solver rotation is about y.'
+         if settings(config).get('enabled', False) else
+         'Coordinates are used as supplied, with origin at the propeller centre and rotation about y.'),
         'Low frequencies below the first positive spectral sample and frequencies beyond common coverage are excluded.',
         'Broadband differences can dominate this metric; it is not a tonal-peak or perceptual score.',
     ]
@@ -266,6 +278,7 @@ def create_comparison(case_path, config=None):
     metadata = {
         'status': 'complete', 'geometry': geometry, 'rpm': rpm,
         'blade_count': config.get('blade_count', 2),
+        'coordinate_mapping': settings(config) if settings(config).get('enabled', False) else None,
         'blade_passing_frequency_hz': rpm * config.get('blade_count', 2) / 60,
         'source_note': source_note,
         'microphone_channel': str(config['microphone_channel']), 'observer_m': observer.tolist(),
@@ -280,6 +293,10 @@ def create_comparison(case_path, config=None):
         'measured_band_limited_spl_db': float(levels(measured_power.sum(), config['floor_db'])),
     }
     metadata['band_limited_level_difference_db'] = (metadata['simulated_band_limited_spl_db'] - metadata['measured_band_limited_spl_db'])
+    from tools.acoustic_tonal import write_tonal_figures
+    metadata['tonal_analysis'] = write_tonal_figures(
+        report, {'simulated': [(sim_f, sim_psd)], 'measured': spectra},
+        metadata, config, low, high)
     plot_comparison(report, edges, sim_db, exp_db, repeat_db, metadata)
     np.savetxt(report / 'acoustic-comparison.csv', np.c_[edges[:-1], edges[1:], sim_db, exp_db, sim_db - exp_db],
                delimiter=',', header='lower_hz,upper_hz,simulated_spl_db,measured_spl_db,difference_db', comments='')
@@ -319,7 +336,7 @@ def plot_comparison(report, edges, simulated, measured, repeats, metadata):
                 fig.text(.09, .055, f"Mean absolute difference: {metadata['overall']['mae_db']:.2f} dB   |   RMSE: {metadata['overall']['rmse_db']:.2f} dB   |   lower is better", fontsize=11)
             else:
                 fig.text(.09, .055, f"Common Hann/Welch processing  |  nominal band width {metadata['nominal_bandwidth_hz']:.2f} Hz  |  unweighted", fontsize=10)
-            ax.set(xlabel='Frequency [Hz]', ylabel='Narrow-band SPL [dB re 20 µPa]', xlim=(edges[0], edges[-1]), ylim=(ymin, ymax))
+            ax.set(xscale='log', xlabel='Frequency [Hz]', ylabel='Narrow-band SPL [dB re 20 µPa]', xlim=(edges[0], edges[-1]), ylim=(ymin, ymax))
             add_bpf_markers(ax, metadata['rpm'], metadata.get('blade_count', 2))
             totals = []
             if kind != 'measured':
@@ -342,6 +359,8 @@ def plot_comparison(report, edges, simulated, measured, repeats, metadata):
 def append_comparison_report(canvas, case_path):
     """Append three spectrum pages and a paginated metrics/provenance section."""
     from reportlab.lib.utils import simpleSplit
+    from tools.acoustic_directivity import append_directivity_report
+    append_directivity_report(canvas, case_path)
     report = Path(case_path) / 'report'
     path = report / 'acoustic-comparison.json'
     if not path.exists():
@@ -364,6 +383,11 @@ def append_comparison_report(canvas, case_path):
         canvas.drawImage(str(report / f'acoustic-{kind}.png'), 30, height - 365, width=width - 60, height=280, preserveAspectRatio=True)
         canvas.drawString(45, height - 390, f"Common evaluated range: {data['overall']['covered_hz'][0]:.1f} - {data['overall']['covered_hz'][1]:.1f} Hz")
         canvas.drawString(45, height - 410, f"Simulation position: {data['observer_m']} m; microphone: {data['microphone_position_m']} m")
+    for kind in data.get('tonal_analysis', {}).get('spectra', {}):
+        page(f"Estimated tonal / broadband SPL - {kind}")
+        canvas.drawImage(str(report / f'acoustic-tonal-{kind}.png'), 30, height - 430,
+                         width=width - 60, height=350, preserveAspectRatio=True)
+        canvas.drawString(45, height - 455, 'Separation is threshold- and resolution-dependent; no motor subtraction.')
     page('Acoustic agreement metrics')
     y = height - 85
     def line(text, bold=False):
@@ -411,11 +435,14 @@ def comparison_or_status(case_path, config=None):
         config = load_config(case_path) if config is None else config
         if not config.get('measurements_directory'):
             raise ValueError('Set measurements_directory in Parameters/acousticComparison.json to enable comparison.')
-        return create_comparison(case_path, config)
+        status = create_comparison(case_path, config)
     except Exception as exc:
         status = {'status': 'unavailable', 'detail': str(exc)}
         (report / 'acoustic-comparison.json').write_text(json.dumps(status, indent=2), encoding='utf-8')
-        return status
+    from tools.acoustic_directivity import directivity_or_status
+    if config is not None:
+        directivity_or_status(case_path, config)
+    return status
 
 
 def main():
