@@ -1,9 +1,9 @@
 # Multiple observers and polar SPL diagrams
 
 Edit `directivity` in each case's `Parameters/acousticComparison.json`. Repository
-settings seed new cases only. The feature is disabled by default: fill in the
-coordinate mapping before setting `enabled` to `true`. The unknown experimental
-centre is deliberately `null`; no fitted centre is silently assumed.
+settings seed new cases only. The repository configuration enables multi-observer
+comparison with a zero centre and identity rotation. Verify these against your
+measurement coordinates before running; no centre or orientation is fitted.
 
 ## Coordinate settings
 
@@ -29,10 +29,37 @@ directivity is disabled; its existing coordinate assumptions still apply.
 
 ## Plane settings
 
-The starter plane contains M1, M8, M10 and M6. Their recorded y coordinates are
-zero. `zero_direction: [1, 0, 0]` defines 0 degrees along experimental +x;
-`positive_direction: [0, 0, 1]` defines 90 degrees along experimental +z.
-Both directions refer to the experimental frame, relative to its propeller centre.
+The default `elevation_planes` select measured microphones in the simulation XY
+and ZY planes. Both contain the simulation Y shaft and are perpendicular to the
+rotor's XZ plane. The previous XZ microphone group sampled the rotor plane and
+is no longer the default. Selection uses recorded coordinates and the configured
+frame transformation, not microphone IDs inferred from a drawing.
+
+Each entry has a `name` and `radial_direction_simulation`, a nonzero direction
+perpendicular to the Y shaft. For example:
+
+```json
+"elevation_planes": [
+  {"name": "Elevation in simulation XY plane", "radial_direction_simulation": [1, 0, 0]},
+  {"name": "Elevation in simulation ZY plane", "radial_direction_simulation": [0, 0, 1]}
+]
+```
+
+The plotted meridional angle is 0 degrees along the radial direction, 90 degrees
+along +shaft, 180 degrees along the opposite radial direction, and 270 degrees
+along -shaft. Thus 0/180 degrees lie in the rotor plane. This is an oriented
+angle around the shaft-containing section, not azimuth around the shaft.
+Planes need at least three distinct sampled angles. Unsupported planes are listed
+in JSON `omitted_planes`; if none remain and no manual planes exist, directivity
+is explicitly unavailable. Off-plane microphones are never projected onto a plane.
+The 1.88 m radius in the schematic is not imposed on measured coordinates.
+
+For existing cases, copy `elevation_planes` into the case-local configuration and
+set `planes` to `[]` to replace the old rotor-plane view. Rebuild using
+`python -m tools.acoustic_comparison "path/to/case"`. A valid all-channel cache
+already contains elevated observers, so no new propagation is needed unless the
+coordinate mapping changes or the cache lacks those channels. This produces
+sampled elevation directivity, not an invented continuous observer sweep.
 
 Add further entries to `planes`, each with `name`, `channels`, `zero_direction`
 and `positive_direction`. Direction vectors must be nonzero and perpendicular.

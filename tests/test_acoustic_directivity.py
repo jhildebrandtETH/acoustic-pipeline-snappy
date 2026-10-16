@@ -11,7 +11,7 @@ import numpy as np
 
 from tools.acoustic_directivity import (frame, transform_position, resolve_observers,
     cache_observers, select_cached_observer, plane_coordinates, directivity_or_status,
-    append_directivity_report)
+    append_directivity_report, elevation_planes, create_directivity)
 
 
 class Tensor:
@@ -81,6 +81,57 @@ class DirectivityTests(unittest.TestCase):
             plane['channels'].append('2')
             with self.assertRaisesRegex(ValueError, 'not coplanar'):
                 plane_coordinates(plane, ids, raw, config)
+
+    def test_elevation_selection_angles_and_rotated_frame(self):
+        # Known meridional positions, plus one observer in the rotor plane
+        # outside the requested section. The latter must not be projected.
+        points = np.array([[1, 0, 0], [1, 1, 0], [0, 1, 0],
+                           [-1, 0, 0], [0, -1, 0], [0, 0, 1]], dtype=float)
+        ids = ['1', '2', '3', '4', '5', '6']
+        for rotation in (np.eye(3), np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])):
+            origin = np.array([.1, .2, .75])
+            config = {'directivity': dict(experimental_rotation_center_m=origin.tolist(),
+                experimental_to_simulation_rotation=rotation.tolist(),
+                elevation_planes=[dict(name='Elevation', radial_direction_simulation=[1, 0, 0])])}
+            raw = points @ rotation + origin
+            planes, omitted = elevation_planes(ids, raw, config)
+            self.assertEqual(omitted, [])
+            self.assertEqual(planes[0]['channels'], ids[:5])
+            np.testing.assert_allclose(planes[0]['angles_deg'], [0, 45, 90, 180, 270])
+            normal = np.cross(planes[0]['zero_direction'], planes[0]['positive_direction'])
+            self.assertAlmostEqual(float((rotation @ normal)[1]), 0)
+            self.assertIn('rotor plane', planes[0]['angle_convention'])
+
+    def test_elevation_rejects_invalid_direction_and_omits_sparse_plane(self):
+        config = {'directivity': dict(experimental_rotation_center_m=[0, 0, 0],
+            elevation_planes=[dict(name='Elevation', radial_direction_simulation=[0, 1, 0])])}
+        with self.assertRaisesRegex(ValueError, 'perpendicular'):
+            elevation_planes(['1', '2', '3'], np.eye(3), config)
+        config['directivity']['elevation_planes'][0]['radial_direction_simulation'] = [1, 0, 0]
+        planes, omitted = elevation_planes(['1', '2', '3'], np.eye(3), config)
+        self.assertEqual(planes, [])
+        self.assertIn('fewer than three', omitted[0])
+        planes, omitted = elevation_planes(['1', '2', '3'], [[1, 0, 0], [2, 0, 0], [-1, 0, 0]], config)
+        self.assertEqual(planes, [])
+        self.assertIn('distinct sampled angles', omitted[0])
+
+    def test_elevation_report_reuses_all_channel_cache(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            case, config, _, _, _ = self.fixture(Path(temporary))
+            config['directivity']['planes'] = []
+            config['directivity']['elevation_planes'] = [
+                dict(name='XY elevation', radial_direction_simulation=[1, 0, 0]),
+                dict(name='ZY elevation', radial_direction_simulation=[0, 0, 1])]
+            result = create_directivity(case, config)
+            self.assertEqual(result['status'], 'complete')
+            self.assertEqual(len(result['planes']), 1)
+            plane = result['planes'][0]
+            self.assertEqual(plane['channels'], ['1', '2', '6'])
+            np.testing.assert_allclose(plane['angles_deg'], [0, 90, 180])
+            self.assertEqual(len(result['omitted_planes']), 1)
+            for filename in [plane['figure'], *plane['comparison_figures'].values()]:
+                self.assertTrue((case / 'report' / filename).is_file())
+            self.assertTrue((case / 'report/acoustic-directivity.csv').is_file())
 
     def test_inconsistent_repeats_fail(self):
         with tempfile.TemporaryDirectory() as temporary:

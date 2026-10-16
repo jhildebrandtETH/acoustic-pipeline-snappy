@@ -162,3 +162,5 @@ The acoustic stage compares matching experimental geometry/RPM recordings with t
 Future flow atlases include uncropped XY/YZ sections through the shaft, covering the full inlet and wake domain, plus labelled wake and rotor detail crops. The latest full-domain quantity/plane views are retained even if they exceed the report chapter page budget. Vortex extraction also uses the full domain.
 
 Acoustic report spectra mark BPF and its harmonics using `blade_count` in `Parameters/acousticComparison.json` (default 2 for older cases). Markers are expected frequencies, not detected peaks. Comparisons also show unweighted band-limited total SPL, FFT spacing and segment duration; the existing experimental repeat envelope is retained. FFT spacing is not the effective Hann/Welch spectral resolution.
+
+Flow-field slice and blade-section images use ParaView Cell to Point Data interpolation for smooth colors. Interpolation is applied only for rendering and can reduce local extrema; saved simulation fields are unchanged. Courant-number maps and blade-wall diagnostics retain native cell values.

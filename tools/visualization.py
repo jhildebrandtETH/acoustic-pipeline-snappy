@@ -908,6 +908,25 @@ def _pvvis_surface(result, settings, run_dir, view, units):
         pvs.Delete(source)
 
 
+def _pvvis_render_flow(source, result, settings, run_dir, view, title, caption,
+                       *, field, **kwargs):
+    """Interpolate displayed flow scalars to points, retaining cell diagnostics."""
+    association, name, label = field
+    if association != "CELLS" or name == "Co":
+        return _pvvis_render(source, result, settings, run_dir, view, title, caption,
+                             field=field, **kwargs)
+    smoothed = pvs.CellDatatoPointData(Input=source)
+    try:
+        smoothed.ProcessAllArrays = 0
+        smoothed.CellDataArraytoprocess = [name]
+        return _pvvis_render(
+            smoothed, result, settings, run_dir, view, title,
+            caption + " Colors are smoothed with Cell to Point Data interpolation; local extrema may be reduced.",
+            field=("POINTS", name, label), **kwargs)
+    finally:
+        pvs.Delete(smoothed)
+
+
 def _pvvis_calc(source, name, expression):
     calculation = pvs.Calculator(Input=source)
     calculation.AttributeType = "Cell Data"
@@ -970,7 +989,7 @@ def _pvvis_blade_detail(base, wall, t, result, settings, run_dir, view, units):
                            "Inspect near-wall gradients and the trailing-edge shear layer; resolved detail depends on the mesh and saved fields.")
                 for name, label in (("relative_speed", "Blade-relative speed [m/s]"),
                                     ("vorticity_magnitude", "Vorticity magnitude [1/s]")) if not settings.get("mesh_only") else ():
-                    _pvvis_attempt(result, run_dir, f"Blade section {name} {station}", lambda: _pvvis_render(
+                    _pvvis_attempt(result, run_dir, f"Blade section {name} {station}", lambda: _pvvis_render_flow(
                         cropped, result, settings, run_dir, view, f"Blade flow section - {name.replace('_', ' ')} ({station})",
                         caption + " Local color scale.", camera=radial.tolist(), field=("CELLS", name, label),
                         time_s=t, overlays=[outline]))
@@ -986,7 +1005,7 @@ def _pvvis_blade_detail(base, wall, t, result, settings, run_dir, view, units):
                     arrows.GlyphMode = "Uniform Spatial Distribution (Bounds Based)"
                     arrows.MaximumNumberOfSamplePoints = 200
                     try:
-                        _pvvis_render(cropped, result, settings, run_dir, view, f"Blade-relative flow directions ({station})",
+                        _pvvis_render_flow(cropped, result, settings, run_dir, view, f"Blade-relative flow directions ({station})",
                                       caption + " Equal-length arrows show the in-plane direction; color gives full relative speed, including its out-of-plane component.",
                                       camera=radial.tolist(), field=("CELLS", "relative_speed", "Blade-relative speed [m/s]"),
                                       time_s=t, overlays=[outline, arrows])
@@ -1008,7 +1027,7 @@ def _pvvis_blade_detail(base, wall, t, result, settings, run_dir, view, units):
                                           "Magnified volume-cell section at a chord extremum. Inspect edge resolution, near-wall cells and refinement transitions. A/B label geometry, not an inferred leading/trailing edge.",
                                           camera=radial.tolist(), edges=True, time_s=t)
                         else:
-                            _pvvis_attempt(result, run_dir, f"Near-wall flow {station} {side}", lambda: _pvvis_render(
+                            _pvvis_attempt(result, run_dir, f"Near-wall flow {station} {side}", lambda: _pvvis_render_flow(
                                 zoom, result, settings, run_dir, view, f"Near-wall flow - {side} ({station})",
                                 caption + " Local color scale; cell edges expose the available resolution.",
                                 camera=radial.tolist(), field=("CELLS", "relative_speed", "Blade-relative speed [m/s]"),
@@ -1243,7 +1262,7 @@ return velocity(data)
                             label = f"p - reference [{units[0]}]"
                             diverging = True
                             note = f" Pressure reference = {reference:.10g} {units[0]} (fixed range midpoint, not freestream or acoustic pressure)."
-                        _pvvis_attempt(result, run_dir, f"{name}, {station}, t={t:g}", lambda: _pvvis_render(
+                        _pvvis_attempt(result, run_dir, f"{name}, {station}, t={t:g}", lambda: _pvvis_render_flow(
                             display_source, result, settings, run_dir, view, f"Flow slice - {name.replace('_', ' ')} ({station})",
                             f"Plane {station}, laboratory frame; D={diameter:.6g} m. Inspect wake asymmetry, shear layers and rotor loading. Color range covers the displayed section across all selected phases; compare legends between sections. Full-domain views include the complete inlet-to-outlet extent; detail views are cropped." + note,
                             camera=camera, field=("CELLS", display_name, label), limits=limits,

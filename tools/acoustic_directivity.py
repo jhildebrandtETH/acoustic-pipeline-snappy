@@ -154,6 +154,48 @@ def plane_coordinates(plane, channels, raw, config):
                 zero_direction=zero.tolist(), positive_direction=positive.tolist())
 
 
+
+def elevation_planes(channels, raw, config):
+    """Select measured observers in planes containing the simulation Y shaft."""
+    requested = settings(config).get('elevation_planes', [])
+    origin, _, rotation = frame(config)
+    tolerance = float(settings(config).get('plane_tolerance_m', .005))
+    if not np.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError('plane_tolerance_m must be positive')
+    raw = np.asarray(raw, dtype=float)
+    points = raw - origin
+    shaft = rotation.T @ np.array([0., 1., 0.])
+    planes, omitted = [], []
+    for specification in requested:
+        radial = vector(specification['radial_direction_simulation'], 'radial_direction_simulation')
+        norm = np.linalg.norm(radial)
+        if norm <= 1e-9 or abs(radial[1]) > 1e-6 * norm:
+            raise ValueError('Elevation radial direction must be nonzero and perpendicular to the simulation Y shaft')
+        radial = rotation.T @ (radial / norm)
+        selected = [ch for ch, point in zip(channels, points)
+                    if abs(point @ np.cross(radial, shaft)) <= tolerance]
+        name = str(specification['name'])
+        if len(selected) < 3:
+            omitted.append(f'{name}: fewer than three measured observers in this shaft-containing plane')
+            continue
+        plane = plane_coordinates(dict(name=name, channels=selected,
+            zero_direction=radial, positive_direction=shaft), channels, raw, config)
+        if len(np.unique(np.round(plane['angles_deg'], 6))) < 3:
+            omitted.append(f'{name}: fewer than three distinct sampled angles')
+            continue
+        plane['kind'] = 'elevation'
+        plane['angle_convention'] = ('Meridional angle: 0/180 deg in rotor plane; '
+                                     '90 deg along +shaft; 270 deg along -shaft')
+        plane['shaft_direction_experimental'] = shaft.tolist()
+        planes.append(plane)
+    return planes, omitted
+
+
+def plane_angle_caption(plane):
+    return plane.get('angle_convention',
+        f"0 deg: {plane['zero_direction']}; 90 deg: {plane['positive_direction']} (experimental axes)")
+
+
 def integrated_components(frequency, density, bounds, config):
     from tools.acoustic_tonal import separate_tones, tonal_settings
     from tools.acoustic_comparison import integrate_density
@@ -168,8 +210,10 @@ def create_directivity(case, config):
     ids = data['channel_ids'].tolist()
     planes = [plane_coordinates(p, ids, data['experimental_positions_m'], config)
               for p in settings(config).get('planes', [])]
+    elevation, omitted = elevation_planes(ids, data['experimental_positions_m'], config)
+    planes = elevation + planes
     if not planes:
-        raise ValueError('Configure at least one directivity plane')
+        raise ValueError('No usable directivity plane. ' + '; '.join(omitted or ['Configure at least one directivity plane']))
     duration = data['pressure_pa'].shape[1] / float(data['sampling_frequency_hz'])
     spectra = {k: {'simulated': [welch_density(row, float(data['sampling_frequency_hz']), duration)], 'measured': []}
                for k, row in zip(ids, data['pressure_pa'])}
@@ -186,6 +230,7 @@ def create_directivity(case, config):
         raise ValueError('No common positive-frequency range for directivity')
     summary = dict(status='complete', geometry=str(data['geometry']), rpm=float(data['rpm']),
                    covered_hz=bounds, segment_duration_s=duration, planes=planes, channels={},
+                   omitted_planes=omitted,
                    settings=settings(config), tonal_settings=config.get('tonal_analysis', {}),
                    measurement_files=[str(p) for p in paths],
                    note='Raw SPL at microphone distances; no distance normalization. Sparse points are not a resolved directivity pattern.')
@@ -209,6 +254,7 @@ def create_directivity(case, config):
 
 def plot_directivity(report, summary):
     from tools.plotting import pyplot as plt
+    from matplotlib.ticker import MaxNLocator
     from tools import MATPLOTLIB_LOCK
     maximum_gap = float(summary['settings'].get('maximum_connected_gap_deg', 60))
     if not np.isfinite(maximum_gap) or not 0 < maximum_gap <= 180:
@@ -226,6 +272,7 @@ def plot_directivity(report, summary):
             for ax, kind in zip(axes, ('simulated', 'measured')):
                 ax.set_title('Simulation' if kind == 'simulated' else 'Experiment', pad=22)
                 ax.set_ylim(*limits)
+                ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
                 if np.all(angles <= 180 + 1e-6):
                     ax.set_thetamin(0)
                     ax.set_thetamax(180)
@@ -250,7 +297,7 @@ def plot_directivity(report, summary):
             fig.text(.5, .17, 'SPL [dB re 20 µPa] — common frequency range %.1f–%.1f Hz' % tuple(summary['covered_hz']), ha='center')
             fig.text(.5, .115, f"Microphone radii {min(radii):.3f}–{max(radii):.3f} m | raw levels; no distance normalization", ha='center', fontsize=9)
             fig.text(.5, .07, 'Markers are computed/measured positions; lines only guide the eye. Tonal/broadband split is estimated.', ha='center', fontsize=9)
-            fig.text(.5, .025, f"0° along {plane['zero_direction']}; 90° along {plane['positive_direction']} (experimental axes)", ha='center', fontsize=8)
+            fig.text(.5, .025, plane_angle_caption(plane), ha='center', fontsize=8)
             filename = f'acoustic-directivity-plane-{index + 1}.png'
             fig.savefig(Path(report) / filename, dpi=160)
             plt.close(fig)
@@ -261,6 +308,7 @@ def plot_directivity(report, summary):
 def plot_component_comparisons(report, summary, plane, index, limits, maximum_gap):
     """Overlay simulation and experiment separately for each integrated SPL."""
     from tools.plotting import pyplot as plt
+    from matplotlib.ticker import MaxNLocator
     from tools import MATPLOTLIB_LOCK
     figures = {}
     angles = np.asarray(plane['angles_deg'])
@@ -271,6 +319,7 @@ def plot_component_comparisons(report, summary, plane, index, limits, maximum_ga
             fig.suptitle(f'{component.capitalize()} SPL — simulation / experiment', fontsize=15, y=.97)
             fig.text(.5, .91, f"{summary['geometry']} | {summary['rpm']:g} RPM | {plane['name']}", ha='center', fontsize=10)
             ax.set_ylim(*limits)
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
             if np.all(angles <= 180 + 1e-6):
                 ax.set_thetamin(0)
                 ax.set_thetamax(180)
@@ -300,7 +349,7 @@ def plot_component_comparisons(report, summary, plane, index, limits, maximum_ga
             fig.text(.5, .10, 'Same radial scale across all components; lines only guide the eye.', ha='center', fontsize=9)
             if component != 'overall':
                 fig.text(.5, .065, 'Tonal / broadband separation is estimated.', ha='center', fontsize=9)
-            fig.text(.5, .025, f"0°: {plane['zero_direction']}; 90°: {plane['positive_direction']} (experimental axes)", ha='center', fontsize=8)
+            fig.text(.5, .025, plane_angle_caption(plane), ha='center', fontsize=8)
             filename = f'acoustic-directivity-plane-{index + 1}-{component}.png'
             fig.savefig(Path(report) / filename, dpi=160)
             plt.close(fig)

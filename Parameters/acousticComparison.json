@@ -21,18 +21,53 @@
   "blade_count": 2,
   "directivity": {
     "enabled": true,
-    "experimental_rotation_center_m": [0, 0, 0],
-    "simulation_rotation_center_m": [0, 0, 0],
-    "experimental_to_simulation_rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    "experimental_rotation_center_m": [
+      0,
+      0,
+      0
+    ],
+    "simulation_rotation_center_m": [
+      0,
+      0,
+      0
+    ],
+    "experimental_to_simulation_rotation": [
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
     "microphone_positions_m": {},
     "plane_tolerance_m": 0.005,
     "maximum_connected_gap_deg": 60,
-    "planes": [
+    "planes": [],
+    "elevation_planes": [
       {
-        "name": "M1-M8-M10-M6 plane",
-        "channels": ["1", "8", "10", "6"],
-        "zero_direction": [1, 0, 0],
-        "positive_direction": [0, 0, 1]
+        "name": "Elevation in simulation XY plane",
+        "radial_direction_simulation": [
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "Elevation in simulation ZY plane",
+        "radial_direction_simulation": [
+          0,
+          0,
+          1
+        ]
       }
     ]
   },
