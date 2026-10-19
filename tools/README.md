@@ -3,6 +3,8 @@
 `cli.py` and `orders.py` validate options and create or resume orders.
 `order_files.py` locks orders and preserves input handling.
 `scheduler.py` manages CPU budgets, dashboard, checkpoints and case workers.
+`slurm.py` submits and reconciles durable case jobs; `slurm_docker.py` applies
+their Docker CPU/memory limits, job cgroup parent when supported, and worker-exit cleanup.
 `preprocessing.py` isolates geometry preparation and preserves previous cases.
 `snappy_pipeline.py` prepares STL geometry, runs standard OpenFOAM meshing and validates the coupled mesh with configurable native layers.
 `simple_mesh_pipeline.py` and `mesh_runner.py` run supplied snappy cases and their reports with Docker or native OpenFOAM.

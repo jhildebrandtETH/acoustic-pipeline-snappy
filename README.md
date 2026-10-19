@@ -50,10 +50,11 @@ sbatch examples/slurm-coordinator.sh
 ```
 
 The coordinator submits a separate batch job for each ready case. Each job keeps
-preprocessing, native snappy meshing, solving, reconstruction and postprocessing
+preprocessing, Docker snappy meshing, solving, reconstruction and postprocessing
 together and releases its fixed allocation when it exits. `--cores-per-case`
-specifies MPI ranks; each job requests one node, that many tasks, and one CPU per
-task. `mem` is total memory per case job; `time` is its wall limit. The order's
+specifies MPI ranks; each job requests one node, one task, and that many CPUs per
+task. `mem` is the Slurm memory request and Docker memory cap per case; `time` is
+the case job's wall limit. The order's
 `--total-cores` remains an admission budget, not the coordinator allocation:
 `--total-cores 32 --cores-per-case 8` allows at most four submitted/running case
 jobs. Waiting jobs count toward this limit. Slurm decides when those jobs run.
@@ -61,32 +62,73 @@ The coordinator itself can request one CPU and small memory; size its wall time
 for the entire order, including queue waits. It must be allowed to call `sbatch`,
 `squeue`, `sacct` and `scontrol` from its compute node.
 
-Slurm mode uses **native Foundation OpenFOAM 13**, with the same existing case
-state machine as local mode. Docker execution and the simple `--mesh-case`
-workflow are not used by Slurm mode. `openfoam_bashrc` must be an absolute path
-on case nodes; `python` must point to the pipeline's Python environment there.
-`setup` is a trusted shell snippet run in every case script before Python (for
-site modules/environment activation). `partition`, `account`, `qos` and
-`constraint` are optional; `time`, `mem` and `openfoam_bashrc` are required.
-The configuration and scientific options are saved in the order and reused on
-resume; allocation/configuration changes require a new order. Invalid settings
-are rejected before a new order is created.
+Slurm mode uses **the same Docker Foundation OpenFOAM 13 image as local mode**:
+`microfluidica/openfoam:13`. Host-native OpenFOAM and MPI installations are not
+required. Each case's Python worker runs once on its allocated node, drives the
+normal preprocessing/mesh/solve/postprocessing state machine, and starts the
+existing OpenFOAM container for meshing and solving. The simple `--mesh-case`
+workflow remains local.
 
-Meshing and solving use `allocated_cores` for both `numberOfSubdomains` and MPI
-rank count. One-rank cases run serially. The Slurm adapter removes Docker's
-root/hardware-thread MPI flags and replaces the launcher with `mpi_launcher`.
-The default is `["mpirun", "-np", "{cores}"]`; use a Slurm-aware Open MPI build
-matching OpenFOAM. A site supporting direct PMIx launch can instead configure
-`["srun", "--mpi=pmix", "--ntasks", "{cores}"]`. Do not wrap the coordinator
-or case Python command in an N-task `srun`: Python runs once, and only parallel
-OpenFOAM utilities launch N ranks. Worker preflight checks Foundation version 13,
-required utilities and the launcher's presence; it cannot establish MPI ABI/plugin
-compatibility. Check `srun --mpi=list` and your site's module guidance. See the
-[Slurm MPI guide](https://slurm.schedmd.com/mpi_guide.html) and
-[Open MPI Slurm documentation](https://docs.open-mpi.org/en/main/launching-apps/slurm.html).
+Minimal configuration, which can live inside the order directory alongside `STL/`:
 
-Repository, order, STL/FEATURES inputs, Python environment and OpenFOAM paths
-must be accessible at identical absolute paths on coordinator and case nodes.
+```json
+{
+  "partition": "debug",
+  "time": "2-00:00:00",
+  "mem": "30G",
+  "runtime": "docker",
+  "docker_image": "microfluidica/openfoam:13",
+  "setup": "",
+  "poll_interval": 10
+}
+```
+
+`time` and `mem` are required; `mem` must be positive and finite (a bare number
+means MiB, or use K/M/G/T). `runtime` defaults to `docker`; `docker_image` defaults
+to the image above. A custom image must provide the same Foundation 13 paths and
+tools as that image. `python` defaults to the coordinator's active Python executable
+and is saved as an absolute path. `setup` is an optional trusted shell snippet run
+in each case script for Python/Docker environment setup. `partition`, `account`,
+`qos` and `constraint` are optional. Scientific settings and cluster configuration
+are saved in the order for resume; allocation/configuration changes require a new
+order. Invalid settings are rejected before a new order is created.
+
+Every case node must run a local Linux Docker daemon accessible to the worker's
+user, with the image already installed (`docker pull microfluidica/openfoam:13`).
+The coordinator does not need Docker; availability is checked on each case node.
+Remote `DOCKER_HOST` connections are unsupported, since worker-lifetime monitoring
+requires the container daemon and worker to share the node's `/proc` filesystem.
+
+Meshing and solving retain the existing in-container `mpirun` commands and use
+`allocated_cores` for both `numberOfSubdomains` and MPI rank count. One-core cases
+run serially. The generated script uses **one** `srun --mpi=none` task with CPU
+binding to launch Python; host MPI/PMIx is not involved. Do not wrap the coordinator
+in a multi-task `srun`. Docker receives the worker's assigned CPU mask, a matching
+CPU quota, and explicit memory/swap limits. Worker preflight rejects a CPU affinity
+mask that does not match the saved core count rather than silently selecting
+arbitrary node CPUs. The cluster must support `srun --cpu-bind=threads` with a
+working task/affinity setup.
+
+When Docker uses the `cgroupfs` driver and the worker exposes an identifiable
+Slurm `job_<id>` cgroup, the container also joins that parent, sharing the job's
+aggregate resource limits/accounting. With other layouts/drivers, explicit Docker
+caps still apply, but Slurm accounting and combined Python/container memory
+enforcement depend on site integration; Docker's daemon-managed cgroup is not
+automatically part of the Slurm job. Verify this on your server. See
+[Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)
+and [Slurm CPU binding](https://slurm.schedmd.com/cpu_management.html).
+
+Containers carry labels identifying their Slurm job and attempt. Worker exit,
+including SIGTERM, removes its attempt's containers. For SIGKILL, a small PID-1
+watchdog inside the container monitors a read-only bind of `/proc/<worker-pid>`;
+it exits when the worker disappears or becomes a zombie, stopping remaining
+container processes within about one second. This does not require native OpenFOAM,
+a privileged container, or a Docker restart policy. Normal solver cleanup still
+stops and removes the container as before. After SIGKILL an exited container may
+remain on that node for inspection, but it no longer runs a solver.
+
+Repository, order, STL/FEATURES inputs and Python environment must be accessible
+at identical absolute paths on coordinator and case nodes.
 Use shared storage with working cross-node POSIX `flock` locks and atomic rename;
 node-local temporary directories and filesystems without these guarantees are
 unsupported. `SimulationOrderStore` locks a separate state-lock file and reloads
@@ -124,6 +166,15 @@ this command in your usual small batch script and submit it:
 python main.py --sim-dir /shared/orders/propeller --slurm --resume
 ```
 
+Orders/config files saved by the initial native-only Slurm implementation are
+automatically migrated to Docker on resume **after existing job identities have
+been reconciled and all old jobs have terminated**. The unused `openfoam_bashrc`
+and host `mpi_launcher` fields are removed; the old configuration is kept in
+`slurm_config_history`. Core allocations, checkpoints, job IDs/history, and inputs
+are preserved. No manual order-JSON editing or new study directory is needed for
+orders that failed because `/opt/openfoam13/etc/bashrc` was absent on the host.
+If an old job remains active or unresolved, migration stops without resubmission.
+
 The coordinator reconciles existing jobs before retrying failures. Pending/running
 jobs are reattached, completed cases stay complete, and failed cases resume from
 the existing validated checkpoints (including report-only recovery). Dependencies
@@ -151,22 +202,29 @@ its case jobs: they can finish, and a replacement coordinator can reattach.
 Tests simulate Slurm responses and process failures locally; they do not run a
 Slurm daemon or CFD workload. On your server, first run a small mesh-only order,
 then a short solve and a two-RPM initialization chain. Verify MPI rank placement,
-decomposition, NCC, reconstruction, memory/CPU enforcement, module/ABI compatibility,
+decomposition, NCC, reconstruction, memory/CPU enforcement, compute-node Docker access,
 report dependencies and shared filesystem locking across different nodes. Exercise
 queued jobs, `scancel`, wall timeout, OOM/node failure, coordinator restart during
 submission, accounting delay, and report-only resume. Confirm allocations are
-released when each case job ends and that native child processes are killed by
-the site's Slurm cgroups. Local mode remains covered by the existing meshing,
+released when each case job ends, and that containers exit after cancellation,
+timeout or a killed worker. Check cgroup parent integration/accounting on your
+site's Docker/Slurm combination. Local mode remains covered by the existing meshing,
 solver and scheduler regression tests.
 
-Implementation verification in WSL: all 22 tests in `tests/test_slurm.py` pass,
-including simulated submissions, lost responses, restart/reattachment, dependency
-and worker failures, checkpoint recovery, progress viewing, concurrent process
-writes, native shell execution and local scheduler dispatch. The full repository
-suite was also run with its declared PDF test dependency: its sole error was the
-existing `test_geometry_study_and_report_include_features` (`KeyError: 'te'`),
-reproduced using an untouched snapshot of HEAD; four optional tests were skipped.
-No Slurm server or actual OpenFOAM mesh/solve was exercised during this change.
+Implementation verification in WSL includes simulated submissions, lost responses,
+restart/reattachment, dependency and worker failures, checkpoint recovery, progress
+viewing, concurrent process writes, migration of failed native orders, Docker
+resource/cleanup options and unchanged local dispatch. Real Docker smoke tests
+also verified the installed OpenFOAM image, two in-container MPI ranks, actual
+container CPU/memory settings and container exit after worker SIGKILL:
+
+```sh
+SLURM_DOCKER_TESTS=1 python -m unittest discover -s tests -p 'test_slurm*.py'
+```
+
+No Slurm server or complete rotor mesh/solve was exercised locally. The previously
+observed feature-refinement test failure (`test_geometry_study_and_report_include_features`,
+`KeyError: 'te'`) also reproduced on the unchanged baseline.
 
 ## Templates and mesh settings
 

@@ -11,16 +11,14 @@ from unittest.mock import patch
 
 from tools.cli import create_parser
 from tools.common import _atomic_write_json
-from tools.native_openfoam import NativeOpenFOAM
 from tools.scheduler import (SimulationOrderStore, RuntimeStatusRegistry,
                              LiveBatchDashboard, run_parallel_scheduler)
 from tools.slurm import (Coordinator, SlurmClient, WorkerRegistry, configure_order,
                          refresh_saved_table, run_worker, script_text, show_status)
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = dict(time='01:00:00', mem='8G', openfoam_bashrc='/opt/foam/etc/bashrc',
-              mpi_launcher=['mpirun', '-np', '{cores}'], python='/env/bin/python',
-              setup='module load OpenFOAM/13', poll_interval=1)
+CONFIG = dict(time='01:00:00', mem='8G', runtime='docker', docker_image='microfluidica/openfoam:13',
+              python='/env/bin/python', setup='', poll_interval=1)
 
 
 def update_in_process(root, folder):
@@ -87,7 +85,8 @@ class SlurmTests(unittest.TestCase):
         self.assertIn('Resources', table)
         text = self.client.submissions[0][0].read_text()
         self.assertTrue(text.startswith('#!/bin/bash\n'))
-        self.assertIn('module load OpenFOAM/13', text)
+        self.assertIn('srun --mpi=none', text)
+        self.assertIn('--cpu-bind=threads', text)
         self.assertIn('slurm_worker.py', text)
 
     def test_progress_visible_to_independent_watcher(self):
@@ -212,8 +211,8 @@ class SlurmTests(unittest.TestCase):
     def test_worker_identity_allocation_and_existing_case_executor(self):
         self.coordinator.tick()
         token = self.store.get_case('case0')['slurm_job']['token']
-        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='2'), \
-                patch('tools.native_openfoam.native_preflight'), \
+        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='1', SLURM_CPUS_PER_TASK='2'), \
+                patch('tools.slurm_docker.SlurmDockerRuntime'), \
                 patch('tools.openfoam.find_source_stls', return_value={}), \
                 patch('tools.slurm.execute_simulation_case', return_value=True) as execute:
             self.assertTrue(run_worker(self.root, 'case0', token))
@@ -221,7 +220,7 @@ class SlurmTests(unittest.TestCase):
             self.assertEqual(execute.call_args.args[0]['depends_on'], None)
             with self.assertRaisesRegex(RuntimeError, 'identity'):
                 run_worker(self.root, 'case0', 'wrong')
-            with patch.dict(os.environ, SLURM_NTASKS='1'):
+            with patch.dict(os.environ, SLURM_CPUS_PER_TASK='1'):
                 with self.assertRaisesRegex(RuntimeError, 'allocation'):
                     run_worker(self.root, 'case0', token)
 
@@ -238,8 +237,8 @@ class SlurmTests(unittest.TestCase):
         case = self.store.get_case('case1')
         def prepare(**kwargs):
             kwargs['TARGET_DIRECTORY'].mkdir()
-        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='2'), \
-                patch('tools.native_openfoam.native_preflight'), \
+        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='1', SLURM_CPUS_PER_TASK='2'), \
+                patch('tools.slurm_docker.SlurmDockerRuntime'), \
                 patch('tools.openfoam.find_source_stls', return_value={'prop': self.root / 'prop.stl'}), \
                 patch('tools.preprocessing.run_preprocessing', side_effect=prepare) as preprocess, \
                 patch('openfoamSimulation.openfoamSimulation', return_value=True) as solve, \
@@ -264,13 +263,13 @@ class SlurmTests(unittest.TestCase):
     def test_preflight_failure_records_failure_without_running_stages(self):
         self.coordinator.tick()
         case = self.store.get_case('case0')
-        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='2'), \
-                patch('tools.native_openfoam.native_preflight', side_effect=RuntimeError('wrong version')), \
+        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='1', SLURM_CPUS_PER_TASK='2'), \
+                patch('tools.slurm_docker.SlurmDockerRuntime', side_effect=RuntimeError('Docker unavailable')), \
                 patch('tools.slurm.execute_simulation_case') as execute:
             self.assertFalse(run_worker(self.root, 'case0', case['slurm_job']['token']))
         execute.assert_not_called()
         self.assertEqual(self.store.case_status('case0'), 'failed')
-        self.assertIn('wrong version', self.store.get_case('case0')['error'])
+        self.assertIn('Docker unavailable', self.store.get_case('case0')['error'])
 
     def test_processes_do_not_overwrite_each_others_case_or_batch_updates(self):
         context = multiprocessing.get_context('spawn')
@@ -305,7 +304,7 @@ class SlurmTests(unittest.TestCase):
                            SLURM_MEM_PER_CPU='99G', SLURM_NTASKS='1', SLURM_CONF='/site/slurm.conf'):
             self.assertEqual(SlurmClient().submit(self.root / 'worker.sh', CONFIG, 8, intent, self.root / 'log'), '123')
         command = run.call_args.args[0]
-        for flag in ('--hold', '--nodes=1', '--ntasks=8', '--cpus-per-task=1', '--mem=8G', '--no-requeue'):
+        for flag in ('--hold', '--nodes=1', '--ntasks=1', '--cpus-per-task=8', '--mem=8G', '--no-requeue'):
             self.assertIn(flag, command)
         self.assertNotIn('SBATCH_MEM_PER_CPU', run.call_args.kwargs['env'])
         self.assertNotIn('SBATCH_NTASKS', run.call_args.kwargs['env'])
@@ -336,35 +335,64 @@ class SlurmTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'immutable'):
             configure_order(self.store, args)
 
-    def test_native_mpi_paths_and_serial_commands(self):
-        with patch.dict(os.environ, ACOUSTIC_MPI_LAUNCHER=json.dumps(['srun', '--mpi=pmix', '-n', '{cores}'])):
-            session = NativeOpenFOAM(self.root, 4)
-            command = session.command(['bash', '-c',
-                'source /opt/openfoam13/etc/bashrc && cd /simulation && mpirun --allow-run-as-root --use-hwthread-cpus -np 4 snappyHexMesh -parallel'])
-            self.assertIn('srun --mpi=pmix -n 4 snappyHexMesh -parallel', command[2])
-            self.assertNotIn('--allow-run-as-root', command[2])
-            self.assertIn('"${ACOUSTIC_CASE}"', command[2])
-            serial = session.command("bash -c 'source /opt/openfoam13/etc/bashrc && mapFields /simulation/init/ -consistent'")
-            self.assertNotIn('srun', serial[2])
-            self.assertIn('mapFields "${ACOUSTIC_CASE}"/init/', serial[2])
+    def test_failed_native_order_migrates_without_editing_json_or_losing_history(self):
+        self.coordinator.tick()
+        old_config = {k: v for k, v in CONFIG.items() if k not in {'runtime', 'docker_image'}}
+        old_config.update(openfoam_bashrc='/opt/missing/etc/bashrc', mpi_launcher=['mpirun', '-np', '{cores}'])
+        self.store.persist_batch_fields(slurm=old_config)
+        for index in range(2):
+            folder = f'case{index}'
+            self.store.mark_failed(folder, 'missing host bashrc', 'pending')
+            self.client.finish(str(100 + index), 'FAILED', '1:0')
+        args = create_parser().parse_args(['--sim-dir', str(self.root), '--slurm', '--resume'])
+        with patch('tools.slurm.SlurmClient', return_value=self.client):
+            configure_order(self.store, args)
+        order = self.store.snapshot()
+        self.assertEqual(order['slurm'], CONFIG)
+        self.assertEqual(order['slurm_config_history'], [old_config])
+        self.assertEqual(order['cases'][0]['slurm_job']['id'], '100')
+        self.assertTrue(order['cases'][0]['slurm_job']['terminal'])
+        self.assertEqual(order['cases'][0]['resume_status'], 'pending')
+        restarted = Coordinator(self.store, self.registry, ROOT, self.client)
+        restarted.resume()
+        restarted.tick()
+        retried = self.store.get_case('case0')
+        self.assertEqual(retried['slurm_history'][0]['id'], '100')
+        self.assertNotEqual(retried['slurm_job']['id'], '100')
 
-    @unittest.skipIf(os.name == 'nt', 'native launcher uses Linux bash')
-    def test_native_stream_exit_code_and_paths_with_spaces(self):
-        case = self.root / 'case with spaces'
-        case.mkdir()
-        bashrc = self.root / 'foam bashrc'
-        bashrc.write_text('export FOAM_TEST_VALUE=ready\n')
-        with patch.dict(os.environ, ACOUSTIC_OPENFOAM_BASHRC=str(bashrc),
-                        ACOUSTIC_MPI_LAUNCHER=json.dumps(CONFIG['mpi_launcher'])):
-            session = NativeOpenFOAM(case, 1)
-            events = []
-            callback = lambda **fields: events.append(fields)
-            self.assertTrue(session.run_native(['bash', '-c',
-                'source /opt/openfoam13/etc/bashrc && cd /simulation && test "$FOAM_TEST_VALUE" = ready && touch success'],
-                'native', False, callback))
-            self.assertTrue((case / 'success').is_file())
-            self.assertFalse(session.run_native(['bash', '-c', 'echo failed; exit 7'], 'native', False, callback))
-            self.assertIn('code 7', events[-1]['error'])
+    def test_native_migration_refuses_active_or_unknown_jobs(self):
+        self.coordinator.tick()
+        old_config = {k: v for k, v in CONFIG.items() if k not in {'runtime', 'docker_image'}}
+        old_config['openfoam_bashrc'] = '/opt/missing/etc/bashrc'
+        self.store.persist_batch_fields(slurm=old_config)
+        args = create_parser().parse_args(['--sim-dir', str(self.root), '--slurm', '--resume'])
+        with patch('tools.slurm.SlurmClient', return_value=self.client):
+            with self.assertRaisesRegex(RuntimeError, 'Cannot migrate'):
+                configure_order(self.store, args)
+        self.assertEqual(self.store.snapshot()['slurm'], old_config)
+        self.assertEqual(len(self.client.submissions), 2)
+
+    def test_legacy_config_file_is_accepted_but_host_mpi_and_bashrc_are_unused(self):
+        self.store.persist_batch_fields(slurm=None)
+        config_file = self.root / 'cluster.json'
+        config_file.write_text(json.dumps(dict(CONFIG, openfoam_bashrc='/does/not/exist',
+                                              mpi_launcher=['srun', '--mpi=pmix', '{cores}'])))
+        args = create_parser().parse_args(['--sim-dir', str(self.root), '--slurm', '--slurm-config', str(config_file)])
+        configure_order(self.store, args)
+        self.assertEqual(self.store.snapshot()['slurm'], CONFIG)
+
+    def test_docker_cleanup_failure_preserves_solver_checkpoint(self):
+        self.coordinator.tick()
+        case = self.store.get_case('case0')
+        with patch.dict(os.environ, SLURM_JOB_ID='100', SLURM_NTASKS='1', SLURM_CPUS_PER_TASK='2'), \
+                patch('tools.slurm_docker.SlurmDockerRuntime') as runtime, \
+                patch('tools.openfoam.find_source_stls', return_value={}), \
+                patch('tools.slurm.execute_simulation_case') as execute:
+            runtime.return_value.__exit__.side_effect = RuntimeError('cleanup failed')
+            execute.side_effect = lambda *args, **kwargs: self.store.set_status('case0', 'solver_done')
+            self.assertFalse(run_worker(self.root, 'case0', case['slurm_job']['token']))
+        self.assertEqual(self.store.get_case('case0')['resume_status'], 'solver_done')
+
 
 
 if __name__ == '__main__':

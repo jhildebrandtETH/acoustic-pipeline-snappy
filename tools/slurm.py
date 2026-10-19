@@ -31,35 +31,44 @@ TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY',
 CASE_TERMINAL = {'postprocessing_done', 'failed', 'blocked'}
 
 
-def validate_config(args, saved=None):
-    config = json.loads(args.slurm_config.read_text()) if args.slurm_config else saved
+def docker_config(config):
+    from tools.slurm_docker import IMAGE, memory_bytes
     if not config:
         raise ValueError('A new Slurm order requires --slurm-config FILE')
     if not isinstance(config, dict):
         raise ValueError('Slurm config must be a JSON object')
     config = dict(config)
     allowed = {'partition', 'account', 'qos', 'constraint', 'time', 'mem',
-               'openfoam_bashrc', 'mpi_launcher', 'setup', 'python', 'poll_interval'}
+               'runtime', 'docker_image', 'setup', 'python', 'poll_interval',
+               'openfoam_bashrc', 'mpi_launcher'}
     if set(config) - allowed:
         raise ValueError(f'Unknown Slurm settings: {sorted(set(config) - allowed)}')
-    for key in ('time', 'mem', 'openfoam_bashrc'):
+    # Accept files/orders written by the initial native-only implementation.
+    # These host settings do not apply to the established in-container commands.
+    config.pop('openfoam_bashrc', None)
+    config.pop('mpi_launcher', None)
+    config.setdefault('runtime', 'docker')
+    config.setdefault('docker_image', IMAGE)
+    if config['runtime'] != 'docker':
+        raise ValueError('Slurm case runtime must be docker')
+    for key in ('time', 'mem', 'docker_image'):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError(f'Slurm config requires {key}')
-    config.setdefault('mpi_launcher', ['mpirun', '-np', '{cores}'])
-    launcher = config['mpi_launcher']
-    if (not isinstance(launcher, list) or not launcher or
-            any(not isinstance(p, str) or not p for p in launcher) or
-            '{cores}' not in launcher):
-        raise ValueError('mpi_launcher must be an argument list containing {cores}')
+    memory_bytes(config['mem'])
     config.setdefault('setup', '')
     config.setdefault('python', sys.executable)
     config.setdefault('poll_interval', 10)
     if not math.isfinite(float(config['poll_interval'])) or float(config['poll_interval']) < 1:
         raise ValueError('Slurm poll_interval must be at least 1 second')
     for key, value in config.items():
-        if key not in {'mpi_launcher', 'poll_interval'} and not isinstance(value, str):
+        if key != 'poll_interval' and not isinstance(value, str):
             raise ValueError(f'Slurm {key} must be a string')
-    if saved and config != saved:
+    return config
+
+
+def validate_config(args, saved=None):
+    config = docker_config(json.loads(args.slurm_config.read_text()) if args.slurm_config else saved)
+    if saved and config != docker_config(saved):
         raise ValueError('Slurm configuration is immutable on resume; use the saved settings')
     return config
 
@@ -68,6 +77,16 @@ def configure_order(store, args):
     order = store.snapshot()
     saved = order.get('slurm')
     config = validate_config(args, saved)
+    if saved and config != saved:
+        # Reconcile old identities before switching script/allocation format.
+        # Active or uncertain native jobs must never overlap replacement jobs.
+        Coordinator(store, RuntimeStatusRegistry(order['cases']), Path(__file__).resolve().parent.parent).reconcile()
+        order = store.snapshot()
+        if any(c.get('slurm_job') and not c['slurm_job'].get('terminal') for c in order['cases']):
+            raise RuntimeError('Cannot migrate while old Slurm jobs are active or unresolved; resume after they exit')
+        history = list(order.get('slurm_config_history', [])) + [saved]
+        store.persist_batch_fields(slurm=config, slurm_config_history=history)
+        print('Migrated saved Slurm configuration to Docker; retained case checkpoints and job history.')
     if not saved:
         # Store only execution options, with all scientific options already restored.
         options = {key: getattr(args, key, None) for key in (
@@ -99,7 +118,7 @@ class SlurmClient:
 
     def submit(self, script, config, cores, intent, log):
         command = ['sbatch', '--parsable', '--hold', '--no-requeue', '--export=ALL',
-                   '--nodes=1', f'--ntasks={cores}', '--cpus-per-task=1',
+                   '--nodes=1', '--ntasks=1', f'--cpus-per-task={cores}', '--hint=nomultithread',
                    f'--job-name={intent["name"]}', f'--output={log}', f'--error={log}',
                    f'--chdir={script.parent}', f'--time={config["time"]}',
                    f'--mem={config["mem"]}']
@@ -182,7 +201,9 @@ def script_text(root, pipeline, config, folder, token):
     command = [config['python'], str(pipeline / 'tools' / 'slurm_worker.py'),
                '--sim-dir', str(root), '--case', folder, '--token', token]
     return ('#!/bin/bash\nset -eo pipefail\n' + config['setup'] +
-            '\nexport OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1\nexec ' +
+            '\nexport OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1\n'
+            'exec srun --mpi=none --exact --nodes=1 --ntasks=1 '
+            '--cpus-per-task="$SLURM_CPUS_PER_TASK" --cpu-bind=threads ' +
             shlex.join(command) + '\n')
 
 
@@ -312,7 +333,7 @@ def show_status(root, watch=False):
 
 
 def run_worker(root, folder, token):
-    from tools.native_openfoam import native_preflight
+    from tools.slurm_docker import SlurmDockerRuntime
     from tools.openfoam import find_source_stls
     root = Path(root).resolve()
     store = SimulationOrderStore(root)
@@ -324,18 +345,24 @@ def run_worker(root, folder, token):
         order = store.snapshot()
         if dependency_state(case, {c['folder']: c['status'] for c in order['cases']})[0] != 'READY':
             raise RuntimeError('Initialization dependency is not complete')
-        if int(os.environ.get('SLURM_NTASKS', '0')) != int(case['allocated_cores']):
+        if (int(os.environ.get('SLURM_NTASKS', '0')) != 1 or
+                int(os.environ.get('SLURM_CPUS_PER_TASK', '0')) != int(case['allocated_cores'])):
             raise RuntimeError('Slurm task allocation differs from saved case decomposition')
         config = order['slurm']
-        os.environ.update(ACOUSTIC_SLURM_NATIVE='1', ACOUSTIC_OPENFOAM_BASHRC=config['openfoam_bashrc'],
-                          ACOUSTIC_MPI_LAUNCHER=json.dumps(config['mpi_launcher']))
         registry = WorkerRegistry(case, root, token)
+        registry.update(folder, state='RUNNING', stage='docker_check', detail='checking compute-node Docker runtime')
         try:
-            native_preflight(config)
+            with SlurmDockerRuntime(config, int(case['allocated_cores']), token):
+                return execute_simulation_case(case, Path(__file__).resolve().parent.parent, root,
+                                               root / 'STL', find_source_stls(root / 'STL'), store,
+                                               registry, Namespace(**order['slurm_worker_options']),
+                                               convergence_tolerance=1e-2)
         except Exception as error:
-            store.mark_failed(folder, f'Native OpenFOAM preflight failed: {error}', case['status'])
+            current = store.get_case(folder)
+            checkpoint = current.get('resume_status') or current['status']
+            if checkpoint == 'postprocessing_done':
+                checkpoint = 'solver_done'
+            message = f'Slurm Docker worker failed: {error}'
+            store.mark_failed(folder, message, checkpoint)
+            registry.update(folder, state='FAILED', stage='failed', detail=message, error=message)
             return False
-        return execute_simulation_case(case, Path(__file__).resolve().parent.parent, root,
-                                       root / 'STL', find_source_stls(root / 'STL'), store,
-                                       registry, Namespace(**order['slurm_worker_options']),
-                                       convergence_tolerance=1e-2)

@@ -85,7 +85,7 @@ def create_parser():
         help="Required for new orders: CPU cores allocated to each case. Remaining cases queue until cores are available.",
     )
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument('--slurm', action='store_true', help='Coordinate separate native OpenFOAM Slurm case jobs.')
+    parser.add_argument('--slurm', action='store_true', help='Coordinate separate Docker OpenFOAM Slurm case jobs.')
     parser.add_argument('--slurm-config', type=Path, help='Cluster JSON settings; saved with the order for resume.')
     parser.add_argument('--status', action='store_true', help='Print the saved case table without launching jobs.')
     parser.add_argument('--watch', action='store_true', help='Continuously watch the saved case table (implies --status).')
