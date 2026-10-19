@@ -617,6 +617,8 @@ def safe_exec(
     output_tail = deque(maxlen=12)
 
     try:
+        if hasattr(container, 'run_native'):
+            return container.run_native(cmd, description, print_output, status_callback)
         container.reload()
 
         if container.status != "running":

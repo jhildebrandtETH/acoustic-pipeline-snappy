@@ -40,13 +40,14 @@ def parameter_file(parameters, name, *, read_only=False):
 def preflight(args):
     safe_path(args.sim_dir)
     from tools.plotting import pyplot
-    import docker
-    client = docker.from_env()
-    try:
-        client.ping()
-        client.images.get('microfluidica/openfoam:13')
-    finally:
-        client.close()
+    if not getattr(args, 'slurm', False):
+        import docker
+        client = docker.from_env()
+        try:
+            client.ping()
+            client.images.get('microfluidica/openfoam:13')
+        finally:
+            client.close()
     if not args.mesh_only:
         import postprocessing
     if args.study:

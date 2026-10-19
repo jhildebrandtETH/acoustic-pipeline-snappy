@@ -69,6 +69,10 @@ def openfoamSimulation(
 
         def start_foundation():
             nonlocal container
+            if os.environ.get('ACOUSTIC_SLURM_NATIVE') == '1':
+                from tools.native_openfoam import NativeOpenFOAM
+                container = NativeOpenFOAM(simulation_working_directory, number_of_cores)
+                return container
             import hashlib
             key = hashlib.sha256(str(simulation_working_directory.resolve()).encode()).hexdigest()[:10]
             container_name = "snappy-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", simulation_name)[:80] + "-" + key

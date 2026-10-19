@@ -36,6 +36,138 @@ python main.py --sim-dir output/my-order --resume
 
 Resume uses stored settings and allocations. Native-snappy and previous unlayered-snappy orders can resume; other backend orders require a fresh order directory. Failed meshing restarts from a fresh case while preserving the previous case in a timestamped sibling. Completed mesh/solve checkpoints allow report recovery without repeating the solver. A file lock prevents simultaneous launchers from modifying one order.
 
+## Slurm case jobs (optional)
+
+Without `--slurm`, the local Docker scheduler, meshing and dashboard behave as before.
+With `--slurm`, submit your usual small coordinator batch script containing the
+normal command with `--slurm --slurm-config /shared/path/cluster.json` added.
+See [coordinator example](examples/slurm-coordinator.sh) and
+[cluster settings](examples/slurm-config.json). Adapt all example paths, partition,
+account and environment setup to your site before submitting:
+
+```sh
+sbatch examples/slurm-coordinator.sh
+```
+
+The coordinator submits a separate batch job for each ready case. Each job keeps
+preprocessing, native snappy meshing, solving, reconstruction and postprocessing
+together and releases its fixed allocation when it exits. `--cores-per-case`
+specifies MPI ranks; each job requests one node, that many tasks, and one CPU per
+task. `mem` is total memory per case job; `time` is its wall limit. The order's
+`--total-cores` remains an admission budget, not the coordinator allocation:
+`--total-cores 32 --cores-per-case 8` allows at most four submitted/running case
+jobs. Waiting jobs count toward this limit. Slurm decides when those jobs run.
+The coordinator itself can request one CPU and small memory; size its wall time
+for the entire order, including queue waits. It must be allowed to call `sbatch`,
+`squeue`, `sacct` and `scontrol` from its compute node.
+
+Slurm mode uses **native Foundation OpenFOAM 13**, with the same existing case
+state machine as local mode. Docker execution and the simple `--mesh-case`
+workflow are not used by Slurm mode. `openfoam_bashrc` must be an absolute path
+on case nodes; `python` must point to the pipeline's Python environment there.
+`setup` is a trusted shell snippet run in every case script before Python (for
+site modules/environment activation). `partition`, `account`, `qos` and
+`constraint` are optional; `time`, `mem` and `openfoam_bashrc` are required.
+The configuration and scientific options are saved in the order and reused on
+resume; allocation/configuration changes require a new order. Invalid settings
+are rejected before a new order is created.
+
+Meshing and solving use `allocated_cores` for both `numberOfSubdomains` and MPI
+rank count. One-rank cases run serially. The Slurm adapter removes Docker's
+root/hardware-thread MPI flags and replaces the launcher with `mpi_launcher`.
+The default is `["mpirun", "-np", "{cores}"]`; use a Slurm-aware Open MPI build
+matching OpenFOAM. A site supporting direct PMIx launch can instead configure
+`["srun", "--mpi=pmix", "--ntasks", "{cores}"]`. Do not wrap the coordinator
+or case Python command in an N-task `srun`: Python runs once, and only parallel
+OpenFOAM utilities launch N ranks. Worker preflight checks Foundation version 13,
+required utilities and the launcher's presence; it cannot establish MPI ABI/plugin
+compatibility. Check `srun --mpi=list` and your site's module guidance. See the
+[Slurm MPI guide](https://slurm.schedmd.com/mpi_guide.html) and
+[Open MPI Slurm documentation](https://docs.open-mpi.org/en/main/launching-apps/slurm.html).
+
+Repository, order, STL/FEATURES inputs, Python environment and OpenFOAM paths
+must be accessible at identical absolute paths on coordinator and case nodes.
+Use shared storage with working cross-node POSIX `flock` locks and atomic rename;
+node-local temporary directories and filesystems without these guarantees are
+unsupported. `SimulationOrderStore` locks a separate state-lock file and reloads
+JSON inside every transaction. Workers write stage/progress records to separate
+per-attempt files under `.slurm/`, without competing over a shared runtime JSON.
+The normal `.pipeline.lock` permits one coordinator, while per-attempt worker
+locks prevent overlapping copies of one case job. This implementation targets
+one Slurm cluster, with accounting enabled, and one node per case.
+
+### Viewing status and resuming
+
+The usual case table appears in coordinator batch output (without terminal escape
+codes). From another terminal, watch the same saved stages and progress without
+starting a coordinator or acquiring its launcher lock:
+
+```sh
+python main.py --sim-dir /shared/orders/propeller --watch
+# One snapshot:
+python main.py --sim-dir /shared/orders/propeller --status
+```
+
+The queued table uses `slurm_queue` and shows job ID, Slurm state and queue reason;
+initialization dependencies retain their waiting state. Workers' stage/progress
+updates remain visible even if the coordinator stops. Queue/accounting state is
+refreshed by the coordinator, so it can be stale while that coordinator is down.
+Ctrl-C exits the viewer. Worker command output is retained in
+`.slurm/<attempt>-%j.log`; normal per-case logs and error tracebacks remain.
+`--live-output` continues to control local runs; Slurm workers always log command
+output while the coordinator retains its table.
+
+To restart after coordinator timeout/interruption or to retry failed cases, put
+this command in your usual small batch script and submit it:
+
+```sh
+python main.py --sim-dir /shared/orders/propeller --slurm --resume
+```
+
+The coordinator reconciles existing jobs before retrying failures. Pending/running
+jobs are reattached, completed cases stay complete, and failed cases resume from
+the existing validated checkpoints (including report-only recovery). Dependencies
+are submitted only after the source case and its Slurm job both finish successfully;
+failed sources block descendants. Cancellation, timeout, OOM, node failure and
+nonzero exit are recorded as failures even if no Python exception was written.
+A zero-exit Slurm job missing the final pipeline checkpoint is also a failure.
+Failures are retried only on explicit `--resume`, not in a loop.
+
+Before `sbatch`, the coordinator saves a unique submission intent; it submits
+held, persists the returned ID, then releases the job. After a crash between
+submission and saving the ID, it finds the held job by its unique name in
+`squeue`/`sacct`. An unknown ID or accounting delay never triggers resubmission.
+If an intent cannot be resolved, the coordinator stops with its name and leaves
+the intent intact. Inspect queue/accounting records and submission errors before
+manual repair; **do not delete job identities while a matching job may exist**.
+After a definitively rejected submission with no matching job, an operator may
+remove only that case's unresolved `slurm_job` entry from `simulation_order.json`
+while no coordinator is running, then resume. Query failures retain all identities.
+Automatic Slurm requeue is disabled. Cancelling the coordinator does not cancel
+its case jobs: they can finish, and a replacement coordinator can reattach.
+
+### Cluster validation still required
+
+Tests simulate Slurm responses and process failures locally; they do not run a
+Slurm daemon or CFD workload. On your server, first run a small mesh-only order,
+then a short solve and a two-RPM initialization chain. Verify MPI rank placement,
+decomposition, NCC, reconstruction, memory/CPU enforcement, module/ABI compatibility,
+report dependencies and shared filesystem locking across different nodes. Exercise
+queued jobs, `scancel`, wall timeout, OOM/node failure, coordinator restart during
+submission, accounting delay, and report-only resume. Confirm allocations are
+released when each case job ends and that native child processes are killed by
+the site's Slurm cgroups. Local mode remains covered by the existing meshing,
+solver and scheduler regression tests.
+
+Implementation verification in WSL: all 22 tests in `tests/test_slurm.py` pass,
+including simulated submissions, lost responses, restart/reattachment, dependency
+and worker failures, checkpoint recovery, progress viewing, concurrent process
+writes, native shell execution and local scheduler dispatch. The full repository
+suite was also run with its declared PDF test dependency: its sole error was the
+existing `test_geometry_study_and_report_include_features` (`KeyError: 'te'`),
+reproduced using an untouched snapshot of HEAD; four optional tests were skipped.
+No Slurm server or actual OpenFOAM mesh/solve was exercised during this change.
+
 ## Templates and mesh settings
 
 `CoreTemplates/` contains both wall treatments for kOmegaSST and kEpsilon in AMI and MRF, plus wall-resolved DES in AMI: nine combinations. `--wall-functions yes|no` is required for new orders. See [template details](CoreTemplates/README.md).

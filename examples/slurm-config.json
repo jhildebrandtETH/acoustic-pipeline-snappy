@@ -1,0 +1,11 @@
+{
+  "partition": "compute",
+  "account": "YOUR_ACCOUNT",
+  "time": "04:00:00",
+  "mem": "32G",
+  "openfoam_bashrc": "/opt/openfoam13/etc/bashrc",
+  "mpi_launcher": ["mpirun", "-np", "{cores}"],
+  "setup": "# Load your site's matching compiler/MPI/OpenFOAM modules here",
+  "python": "/path/to/of_pipeline_env/bin/python",
+  "poll_interval": 10
+}

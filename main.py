@@ -22,6 +22,15 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
+    if args.status or args.watch:
+        from tools.slurm import show_status
+        show_status(args.sim_dir, watch=args.watch)
+        return
+    if args.slurm and (args.mesh_case or args.mesh_native):
+        parser.error('--slurm supports rotor orders, not --mesh-case/--mesh-native')
+    if args.slurm_config and not args.slurm:
+        parser.error('--slurm-config requires --slurm')
+
     if args.mesh_case or args.mesh_native:
         from tools.simple_mesh_pipeline import run_simple_mesh_pipeline
         try:
@@ -53,7 +62,11 @@ def main() -> None:
             f"  field init        : {args.field_init}\n"
         )
 
-        run_parallel_scheduler(
+        scheduler = run_parallel_scheduler
+        if args.slurm:
+            from tools.slurm import run_slurm_scheduler
+            scheduler = run_slurm_scheduler
+        scheduler(
             pipeline_main_directory=pipeline_main_directory,
             simulations_directory=simulations_directory,
             source_meshes_directory=source_meshes_directory,
@@ -116,7 +129,7 @@ def main() -> None:
                     run_order()
                 finally:
                     faulthandler.enable()
-    except (ValueError, FileExistsError, FileNotFoundError) as error:
+    except (ValueError, RuntimeError, FileExistsError, FileNotFoundError) as error:
         parser.error(str(error))
 
 

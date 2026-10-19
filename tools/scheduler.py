@@ -11,15 +11,17 @@ from datetime import datetime
 
 from tools.common import _atomic_write_json
 from tools.openfoam import load_simulation_order
+from tools.process_lock import file_lock
+from contextlib import contextmanager
 
 
 class SimulationOrderStore:
     """
-    Thread-safe owner of simulation_order.json.
+    Process- and thread-safe owner of simulation_order.json.
 
-    Worker threads must not read-modify-write the JSON independently. They report
-    durable state transitions through this object, which serializes and atomically
-    persists every update.
+    Workers report transitions through this object. Every operation locks a
+    separate inode, reloads current state, and atomically persists updates, so
+    independently created stores never overwrite another process's changes.
     """
 
     def __init__(self, simulations_directory: Path):
@@ -28,13 +30,19 @@ class SimulationOrderStore:
         self._lock = threading.RLock()
         self._batch = load_simulation_order(self.simulations_directory)
 
+    @contextmanager
+    def _transaction(self):
+        with self._lock, file_lock(self.simulations_directory / '.order-state.lock'):
+            self._batch = load_simulation_order(self.simulations_directory)
+            yield
+
     def snapshot(self) -> dict:
-        with self._lock:
+        with self._transaction():
             # JSON round-trip provides a simple deep copy for this JSON-only data.
             return json.loads(json.dumps(self._batch))
 
     def get_case(self, folder_name: str) -> dict:
-        with self._lock:
+        with self._transaction():
             for case in self._batch["cases"]:
                 if case["folder"] == folder_name:
                     return dict(case)
@@ -45,7 +53,7 @@ class SimulationOrderStore:
         return str(self.get_case(folder_name)["status"])
 
     def update_case(self, folder_name: str, **updates) -> dict:
-        with self._lock:
+        with self._transaction():
             for case in self._batch["cases"]:
                 if case["folder"] == folder_name:
                     case.update(updates)
@@ -72,7 +80,7 @@ class SimulationOrderStore:
         )
 
     def persist_batch_fields(self, **updates) -> None:
-        with self._lock:
+        with self._transaction():
             self._batch.update(updates)
             _atomic_write_json(self.json_path, self._batch)
 
@@ -671,6 +679,7 @@ def block_cases_with_failed_dependencies(order_store: SimulationOrderStore, regi
 def reactivate_failed_cases_for_resume(
     order_store: SimulationOrderStore,
     simulations_directory: Path,
+    eligible_folders: set[str] | None = None,
 ) -> None:
     """Reactivate failed/blocked cases using their stored durable resume point."""
     from tools.openfoam import get_safe_timestep
@@ -678,6 +687,8 @@ def reactivate_failed_cases_for_resume(
     order = order_store.snapshot()
 
     for case in order["cases"]:
+        if eligible_folders is not None and case['folder'] not in eligible_folders:
+            continue
         status = case.get("status")
 
         if status == "failed":

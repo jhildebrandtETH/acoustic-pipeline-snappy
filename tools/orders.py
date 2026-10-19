@@ -22,6 +22,9 @@ def prepare_simulation_order(args, parser):
     except ValueError as error:
         parser.error(str(error))
     if not args.resume:
+        if getattr(args, 'slurm', False):
+            from tools.slurm import validate_config
+            validate_config(args)
         require_new_order(simulations_directory)
         seed_current_stl(simulations_directory)
     source_meshes_directory = simulations_directory / "STL"
@@ -46,6 +49,8 @@ def prepare_simulation_order(args, parser):
             )
 
         raw_order = load_simulation_order(simulations_directory)
+        if bool(raw_order.get('slurm')) != bool(getattr(args, 'slurm', False)):
+            parser.error('Resume must use the original execution mode (include --slurm for Slurm orders).')
         if raw_order.get("meshing_backend") not in COMPATIBLE_BACKENDS:
             parser.error(
                 "This order was not created by a supported snappy pipeline; use a fresh order directory."
@@ -126,12 +131,11 @@ def prepare_simulation_order(args, parser):
             preflight(args)
         except Exception as error:
             parser.error(str(error))
-        save_simulation_order(simulations_directory, order)
+        if not getattr(args, 'slurm', False):
+            save_simulation_order(simulations_directory, order)
         order_store = SimulationOrderStore(simulations_directory)
-        reactivate_failed_cases_for_resume(
-            order_store,
-            simulations_directory,
-        )
+        if not getattr(args, 'slurm', False):
+            reactivate_failed_cases_for_resume(order_store, simulations_directory)
         order = order_store.snapshot()
 
     # ----------------------------------------------------------------------
@@ -224,4 +228,8 @@ def prepare_simulation_order(args, parser):
         order_store = SimulationOrderStore(simulations_directory)
         order = order_store.snapshot()
 
+    if getattr(args, 'slurm', False):
+        from tools.slurm import configure_order
+        configure_order(order_store, args)
+        order = order_store.snapshot()
     return simulations_directory, source_meshes_directory, source_meshes, order_store, order
