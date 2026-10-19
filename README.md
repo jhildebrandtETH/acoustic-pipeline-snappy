@@ -52,8 +52,16 @@ sbatch examples/slurm-coordinator.sh
 The coordinator submits a separate batch job for each ready case. Each job keeps
 preprocessing, Docker snappy meshing, solving, reconstruction and postprocessing
 together and releases its fixed allocation when it exits. `--cores-per-case`
-specifies MPI ranks; each job requests one node, one task, and that many CPUs per
-task. `mem` is the Slurm memory request and Docker memory cap per case; `time` is
+specifies Slurm CPU slots and MPI ranks; each job requests one node, one task,
+and that many CPUs per task. A CPU slot may be a hardware thread on an SMT-enabled
+cluster, rather than a whole physical core. The pipeline does not force
+`--hint=nomultithread`, which can double Slurm's allocation count on such nodes.
+For example, `--total-cores 150 --cores-per-case 50` admits three jobs each
+requesting 50 Slurm CPUs; the coordinator's separate allocation is additional.
+Slurm may round allocations according to site resource granularity and policy.
+Already-submitted jobs retain their original allocation and are reattached on
+resume; this correction applies to new submissions.
+`mem` is the Slurm memory request and Docker memory cap per case; `time` is
 the case job's wall limit. The order's
 `--total-cores` remains an admission budget, not the coordinator allocation:
 `--total-cores 32 --cores-per-case 8` allows at most four submitted/running case

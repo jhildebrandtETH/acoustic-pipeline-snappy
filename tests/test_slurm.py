@@ -301,6 +301,7 @@ class SlurmTests(unittest.TestCase):
         intent = dict(name='acoustic-token')
         with patch('tools.slurm.subprocess.run', return_value=Namespace(stdout='123\n')) as run, \
                 patch.dict(os.environ, SBATCH_MEM_PER_CPU='99G', SBATCH_NTASKS='1',
+                           SBATCH_HINT='nomultithread', SLURM_HINT='nomultithread',
                            SLURM_MEM_PER_CPU='99G', SLURM_NTASKS='1', SLURM_CONF='/site/slurm.conf'):
             self.assertEqual(SlurmClient().submit(self.root / 'worker.sh', CONFIG, 8, intent, self.root / 'log'), '123')
         command = run.call_args.args[0]
@@ -308,9 +309,35 @@ class SlurmTests(unittest.TestCase):
             self.assertIn(flag, command)
         self.assertNotIn('SBATCH_MEM_PER_CPU', run.call_args.kwargs['env'])
         self.assertNotIn('SBATCH_NTASKS', run.call_args.kwargs['env'])
+        self.assertNotIn('SBATCH_HINT', run.call_args.kwargs['env'])
+        self.assertNotIn('SLURM_HINT', run.call_args.kwargs['env'])
+        self.assertNotIn('--hint=nomultithread', command)
         self.assertNotIn('SLURM_MEM_PER_CPU', run.call_args.kwargs['env'])
         self.assertNotIn('SLURM_NTASKS', run.call_args.kwargs['env'])
         self.assertEqual(run.call_args.kwargs['env']['SLURM_CONF'], '/site/slurm.conf')
+
+    def test_three_fifty_cpu_cases_request_150_slots_without_physical_core_hint(self):
+        self.store.persist_batch_fields(total_cores=150, cores_per_case=50, max_parallel_cases=3)
+        for case in self.store.snapshot()['cases']:
+            self.store.update_case(case['folder'], allocated_cores=50)
+        submitted = []
+        client = SlurmClient()
+        def run(command, **kwargs):
+            if command[0] == 'sbatch':
+                submitted.append(command)
+                return str(100 + len(submitted))
+            return ''
+        with patch.object(client, 'run', side_effect=run):
+            Coordinator(self.store, self.registry, ROOT, client).tick()
+        self.assertEqual(len(submitted), 3)
+        total = 0
+        for command in submitted:
+            self.assertIn('--ntasks=1', command)
+            self.assertIn('--cpus-per-task=50', command)
+            self.assertFalse(any(flag.startswith('--hint=') or flag.startswith('--threads-per-core=')
+                                 for flag in command))
+            total += int(next(flag.split('=')[1] for flag in command if flag.startswith('--cpus-per-task=')))
+        self.assertEqual(total, 150)
 
     def test_queue_and_accounting_parsing_ignores_steps_and_queue_wins(self):
         client = SlurmClient()

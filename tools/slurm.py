@@ -118,7 +118,7 @@ class SlurmClient:
 
     def submit(self, script, config, cores, intent, log):
         command = ['sbatch', '--parsable', '--hold', '--no-requeue', '--export=ALL',
-                   '--nodes=1', '--ntasks=1', f'--cpus-per-task={cores}', '--hint=nomultithread',
+                   '--nodes=1', '--ntasks=1', f'--cpus-per-task={cores}',
                    f'--job-name={intent["name"]}', f'--output={log}', f'--error={log}',
                    f'--chdir={script.parent}', f'--time={config["time"]}',
                    f'--mem={config["mem"]}']
