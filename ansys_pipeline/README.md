@@ -19,13 +19,19 @@ Punkte getrennt; die Zahl der Volumenzellen bleibt erhalten.
 Wie bisher unter Linux/WSL mit Docker und `microfluidica/openfoam:13` arbeiten.
 Eine Fluent-Lizenz ist für den Import nicht erforderlich.
 
-Eine vorhandene Pipeline-Umgebung kann weiterverwendet werden. Zusätzlich benötigt
-sie `h5py` für `.msh.h5`:
+Die Umgebungsdatei enthält die Python-Abhängigkeiten für Import, Solversteuerung,
+Akustik, Visualisierung, Courant-Diagnostik, Notebooks und Regressionstests.
+Eine vorhandene Umgebung aus diesem `ansys_pipeline`-Ordner aktualisieren:
 
 ```sh
+conda env update -n of_pipeline_env -f of_pipeline_env.yml
 conda activate of_pipeline_env
-python -m pip install 'h5py>=3.10,<4'
 ```
+
+`-n` muss dem Namen der tatsächlich verwendeten Umgebung entsprechen; für die
+separate Ansys-Umgebung `-n ansys_pipeline_env` verwenden. Die Aktivierung allein
+installiert keine neuen Abhängigkeiten. Keine zusätzlichen manuellen pip-Schritte
+sind für diese Pipeline erforderlich.
 
 Alternativ aus diesem Ordner eine eigene Umgebung erstellen:
 
@@ -147,7 +153,6 @@ kleiner Flächen eine Koordinatengenauigkeit von 17 Stellen verwendet.
 ## Prüfungen
 
 ```sh
-python -m pip install -r requirements-test.txt
 python -m unittest discover -s tests
 ```
 
@@ -160,8 +165,8 @@ OPENFOAM_TEMPLATE_SMOKE=1 python -m unittest discover -s tests -p test_template_
 ```
 
 Dieser Test benötigt Linux/WSL, Docker und das lokal verfügbare Image
-`microfluidica/openfoam:13`. Die Python-Testabhängigkeiten ergänzen die oben
-beschriebene Pipeline-Umgebung.
+`microfluidica/openfoam:13`. Die Python-Testabhängigkeiten sind in der oben
+beschriebenen Pipeline-Umgebung enthalten.
 
 ## Einstellungen und Versionskontrolle
 

@@ -71,11 +71,15 @@ Binary solution fields must first be exported to an ASCII copy with OpenFOAM.
 
 ## Run
 
-Install optional diagnostic dependencies in your Python environment:
+NumPy and VTK are included in `of_pipeline_env.yml`. From the ansys_pipeline
+directory, update and activate your existing environment before using diagnostics:
 
 ```sh
-python -m pip install numpy vtk
+conda env update -n of_pipeline_env -f of_pipeline_env.yml
+conda activate of_pipeline_env
 ```
+
+Use `-n ansys_pipeline_env` instead if that is your environment's name.
 
 From the ansys_pipeline directory in WSL:
 

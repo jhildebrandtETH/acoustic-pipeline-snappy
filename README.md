@@ -16,6 +16,13 @@ conda activate of_pipeline_env
 docker pull microfluidica/openfoam:13
 ```
 
+To update an existing environment with all runtime, diagnostic, notebook and test dependencies, run from the repository root:
+
+```sh
+conda env update -n of_pipeline_env -f of_pipeline_env.yml
+conda activate of_pipeline_env
+```
+
 The solver and meshing utilities all run in the same Foundation OpenFOAM 13 container. No host mesher installation is needed. The current acousticSolver source is included directly so this copy is self-contained.
 
 ## Start an order

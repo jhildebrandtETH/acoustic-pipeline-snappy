@@ -17,11 +17,23 @@ dependencies:
       - docker==7.1.0
       - h5py>=3.10,<4
       - trimesh==4.12.2
-      - numpy>=1.26,<3
+      - numpy>=2,<3
       - pandas>=2.2,<3
-      - matplotlib>=3.8,<4
+      - matplotlib>=3.11,<4
       - reportlab>=4.1,<5
 
+      # Geometry, visualization and Courant diagnostics.
+      - pyvista>=0.48.4
+      - vtk>=9.6.2,<10
+
+      # Acoustic plotting and progress reporting.
+      - scienceplots>=2.2.2
+      - tqdm>=4.68.4
+
+      # Bundled notebooks and pipeline regression tests.
+      - ipykernel>=7.3.0
+      - pypdf>=6,<7
+
       # Install FoamAcoustics and its own package dependencies from the
-      # bundled source. Run `conda env create` from the ansys_pipeline directory.
+      # bundled source. Run `conda env create/update` from the ansys_pipeline directory.
       - -e ./acousticSolver
