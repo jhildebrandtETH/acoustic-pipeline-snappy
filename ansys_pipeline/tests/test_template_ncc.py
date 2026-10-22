@@ -44,8 +44,8 @@ vertices
 );
 blocks
 (
- hex (0 1 2 3 4 5 6 7) (2 2 2) simpleGrading (1 1 1)
- hex (8 9 10 11 12 13 14 15) (2 2 2) simpleGrading (1 1 1)
+ hex (0 1 2 3 4 5 6 7) (4 4 4) simpleGrading (1 1 1)
+ hex (8 9 10 11 12 13 14 15) (4 4 4) simpleGrading (1 1 1)
 );
 edges ();
 boundary
@@ -61,19 +61,27 @@ boundary
 );
 mergePatchPairs ();
 ''')
+                    inlet_runtime_check = mode == 'AMI' and model == 'kOmegaSST' and treatment == 'no'
                     result = subprocess.run([
                         'docker', 'run', '--rm', '--user', f'{os.getuid()}:{os.getgid()}',
                         '-v', f'{case}:/case', '-w', '/case', '--entrypoint', 'bash',
                         'microfluidica/openfoam:13', '-lc',
                         'source /opt/openfoam13/etc/bashrc && '
                         'blockMesh > log.blockMesh 2>&1 && '
-                        'createNonConformalCouples -fields rotaryRegion_slave rotaryRegion'
+                        'createNonConformalCouples -fields rotaryRegion_slave rotaryRegion' +
+                        (' && foamRun -solver incompressibleFluid > log.inlet-runtime 2>&1'
+                         if inlet_runtime_check else '')
                     ], text=True, capture_output=True, timeout=120)
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    runtime_log = case / 'log.inlet-runtime'
+                    details = runtime_log.read_text() if runtime_log.exists() else ''
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr + details)
                     self.assertNotIn('Using dynamicCode', result.stdout)
                     self.assertFalse((case / 'dynamicCode').exists())
                     self.assertIn('nonConformalCyclic',
                                   (case / 'constant/polyMesh/boundary').read_text())
+                    if inlet_runtime_check:
+                        self.assertTrue((case / '1/p').is_file())
+                        self.assertIn('End', details)
 
 
 if __name__ == '__main__':

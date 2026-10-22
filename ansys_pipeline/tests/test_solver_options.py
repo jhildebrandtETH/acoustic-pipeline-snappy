@@ -15,6 +15,24 @@ from tools.snappy_pipeline import safe_path
 
 
 class SolverOptionsTests(unittest.TestCase):
+    def test_pressure_inlet_keeps_the_initial_and_outlet_reference(self):
+        from tools.settings_report import read_dictionary
+        for mode in ('AMI', 'MRF'):
+            for model in ('kOmegaSST', 'kEpsilon'):
+                for walls in ('yes', 'no'):
+                    with self.subTest(mode=mode, model=model, walls=walls):
+                        template = template_directory(mode, model, walls)
+                        pressure = read_dictionary(template / '0/p', template, {}, [])
+                        velocity = read_dictionary(template / '0/U', template, {}, [])
+                        inlet = pressure['boundaryField']['inlet']
+                        outlet = pressure['boundaryField']['outlet']
+                        self.assertEqual(inlet['type'], 'totalPressure')
+                        self.assertEqual(velocity['boundaryField']['inlet']['type'], 'pressureInletOutletVelocity')
+                        self.assertEqual(inlet['p0'], pressure['internalField'])
+                        self.assertEqual(inlet['value'], outlet['value'])
+                        self.assertEqual(inlet['p0'], outlet['value'])
+                        self.assertEqual(pressure['dimensions'], '[0 2 -2 0 0 0 0]')
+
     def test_template_matrix_and_boundary_conditions(self):
         count = 0
         for mode in ('AMI', 'MRF'):

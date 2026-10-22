@@ -15,9 +15,9 @@ FoamFile
 }
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
-dimensions      [0 2 -2 0 0 0 0];   // kg / (m·s²) = Pa
+dimensions      [0 2 -2 0 0 0 0];   // incompressible kinematic pressure [m2/s2]
 
-// set initial static pressure, e.g. 1 atm
+// Keep the same kinematic-pressure reference at inlet, outlet and initialization.
 internalField   uniform 101325;
 
 boundaryField
@@ -26,13 +26,15 @@ boundaryField
 
     inlet
     {
-        type            zeroGradient;
+        type            totalPressure;
+        p0              uniform 101325;
+        value           uniform 101325;
     }
 
     outlet
     {
         type            fixedValue;
-        value           uniform 101325;   // reference static pressure
+        value           uniform 101325;   // kinematic-pressure reference
     }
 
     walls

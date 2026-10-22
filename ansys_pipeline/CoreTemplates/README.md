@@ -7,6 +7,16 @@ and `--wall-functions yes|no`. Templates are arranged as
 There are nine supported combinations: both wall treatments for SST and k-epsilon
 in both rotation modes, plus wall-resolved DES in AMI only.
 
+SST and k-epsilon use `totalPressure` at the inlet with
+`pressureInletOutletVelocity` for velocity. Inlet `p0`, initial pressure and the
+fixed outlet pressure retain the same `101325` reference. Here `p` is kinematic
+pressure (`m2/s2`); this is a shared reference offset, not pressure in pascals.
+DES retains its existing total-pressure boundaries and zero reference.
+
+Start a fresh order from time zero to apply these template changes. Existing
+orders use saved template snapshots; `--resume` does not update their boundary
+conditions. Do not initialize the new test from a diverged solution.
+
 - AMI: moving rotor mesh, NCC coupling.
 - MRF: stationary mesh, NCC coupling, rotaryRegion MRF zone, MRFnoSlip propeller.
 - Wall functions: nutkWallFunction, kqRWallFunction and omegaWallFunction or epsilonWallFunction.
