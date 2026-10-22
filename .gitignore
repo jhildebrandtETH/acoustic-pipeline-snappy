@@ -16,3 +16,7 @@ runs/
 # Local report recovery and rendering checks
 tmp/
 output/
+
+# Fluent session scratch files
+/fluent-*.trn
+/fluent-*-error.log

@@ -1,0 +1,11 @@
+{
+  "scale": 0.001,
+  "rotorCellZone": "rotaryregion",
+  "rotorFaceZone": "rotor_interface",
+  "patches": {
+    "propeller": "propeller",
+    "inlet": "inlet",
+    "outlet": "outlet",
+    "walls": "walls"
+  }
+}

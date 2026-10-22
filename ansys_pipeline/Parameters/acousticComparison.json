@@ -1,0 +1,79 @@
+{
+  "measurements_directory": "/home/jhildebrandt/measurements",
+  "microphone_channel": "1",
+  "frequency_bins_hz": [
+    [
+      0,
+      1000
+    ],
+    [
+      1000,
+      4000
+    ],
+    [
+      4000,
+      null
+    ]
+  ],
+  "spectrum_bandwidth_hz": 20.0,
+  "maximum_frequency_hz": 12000.0,
+  "floor_db": -120.0,
+  "blade_count": 2,
+  "directivity": {
+    "enabled": true,
+    "experimental_rotation_center_m": [
+      0,
+      0,
+      0
+    ],
+    "simulation_rotation_center_m": [
+      0,
+      0,
+      0
+    ],
+    "experimental_to_simulation_rotation": [
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "microphone_positions_m": {},
+    "plane_tolerance_m": 0.005,
+    "maximum_connected_gap_deg": 60,
+    "planes": [],
+    "elevation_planes": [
+      {
+        "name": "Elevation in simulation XY plane",
+        "radial_direction_simulation": [
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "Elevation in simulation ZY plane",
+        "radial_direction_simulation": [
+          0,
+          0,
+          1
+        ]
+      }
+    ]
+  },
+  "tonal_analysis": {
+    "median_window_bins": 21,
+    "threshold_db": 8.0,
+    "half_width_bins": 2
+  }
+}

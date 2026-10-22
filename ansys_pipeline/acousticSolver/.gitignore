@@ -1,0 +1,30 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*_cache/
+
+# Virtual environments and build output
+.venv/
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+tests/
+
+# Local application and measurement data
+.foamacoustics/
+actual/
+Measurements/
+field data/
+spectrum_comparisons/
+Figures/
+
+# Editor and operating-system files
+.DS_Store
+*.swp

@@ -4,6 +4,8 @@ STL input → blockMesh → surfaceFeatures → snappyHexMesh (castellation, sna
 
 Native snappy layers are enabled by `addLayers true` in `Parameters/snappyHexMeshDict.cpp`. Set it to `false` to disable them. All layer controls are in that same file; there is no separate layer tool or CLI switch.
 
+For pre-generated Fluent meshes, use the self-contained [ANSYS import pipeline](ansys_pipeline/README.md). It has its own entry point, configuration and tests; run its commands from `ansys_pipeline/`.
+
 ## Setup
 
 Run under Linux or WSL with Docker available and the `microfluidica/openfoam:13` image installed. From the repository root:

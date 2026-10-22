@@ -1,0 +1,31 @@
+# Simulation inputs and results.
+/output/
+/runs/
+/MESH/
+*.msh
+*.msh.h5
+*.cas
+*.cas.h5
+*.dat.h5
+fluent-*.trn
+fluent-*-error.log
+log.*
+/CoreTemplates/**/constant/polyMesh/
+/CoreTemplates/**/constant/cellToRegion
+/CoreTemplates/**/constant/triSurface/*.stl
+
+# Python, notebook and local build artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+*.egg-info/
+.coverage
+htmlcov/
+build/
+dist/
+.DS_Store
+*Zone.Identifier
