@@ -114,6 +114,7 @@ class DockerAllocationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(stage, 'ensure_case_core_configuration'), \
                 patch.object(stage, 'remove_stale_stopped_container'), \
+                patch('tools.wall_omega.prepare_wall_omega'), \
                 patch.object(stage, 'run_mesh', side_effect=lambda start, *args: bool(start())):
             with SlurmDockerRuntime(CONFIG, 2, 'attempt'):
                 self.assertTrue(stage.openfoamSimulation('case', Path(tmp), 1e-2, 4000, 1000,
@@ -135,6 +136,7 @@ class DockerAllocationTests(unittest.TestCase):
                 patch('docker.from_env') as docker, \
                 patch.object(stage, 'ensure_case_core_configuration'), \
                 patch.object(stage, 'remove_stale_stopped_container'), \
+                patch('tools.wall_omega.prepare_wall_omega'), \
                 patch.object(stage, 'run_mesh', side_effect=lambda start, *args: bool(start())):
             docker.return_value.containers.run.return_value.status = 'running'
             self.assertTrue(stage.openfoamSimulation('case', Path(tmp), 1e-2, 4000, 1000,

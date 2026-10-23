@@ -198,6 +198,8 @@ def agreement_metrics(edges, simulated_db, measured_db, bins):
 
 
 def validate_config(config):
+    from tools.acoustic_annotations import minimum_frequency_hz
+    minimum_frequency_hz(config, 60.)
     from tools.acoustic_tonal import tonal_settings
     tonal_settings(config)
     for name in ('spectrum_bandwidth_hz', 'maximum_frequency_hz'):
@@ -249,7 +251,8 @@ def create_comparison(case_path, config=None):
         raise ValueError('Each microphone position must contain three finite coordinates')
     if any(not np.allclose(pos, positions[0], atol=1e-6) for pos in positions):
         raise ValueError('Matched repeats use different microphone positions; select a consistent measurement directory')
-    low = max(sim_f[1], *(freq[1] for freq, _ in spectra))
+    from tools.acoustic_annotations import minimum_frequency_hz
+    low = max(minimum_frequency_hz(config, rpm), sim_f[1], *(freq[1] for freq, _ in spectra))
     high = min(config['maximum_frequency_hz'], sim_f[-1], *(freq[-1] for freq, _ in spectra))
     bandwidth = max(config['spectrum_bandwidth_hz'], 2 / duration)
     if high - low < bandwidth:
@@ -267,7 +270,7 @@ def create_comparison(case_path, config=None):
         ('Microphone coordinates use the configured experimental-to-simulation mapping; solver rotation is about y.'
          if settings(config).get('enabled', False) else
          'Coordinates are used as supplied, with origin at the propeller centre and rotation about y.'),
-        'Low frequencies below the first positive spectral sample and frequencies beyond common coverage are excluded.',
+        'Frequencies below the configured BPF multiple or native positive-frequency coverage, and above common coverage, are excluded.',
         'Broadband differences can dominate this metric; it is not a tonal-peak or perceptual score.',
     ]
     position_match = np.allclose(observer, positions[0], atol=1e-3, rtol=0)
@@ -278,6 +281,7 @@ def create_comparison(case_path, config=None):
     metadata = {
         'status': 'complete', 'geometry': geometry, 'rpm': rpm,
         'blade_count': config.get('blade_count', 2),
+        'minimum_frequency_bpf_multiple': config.get('minimum_frequency_bpf_multiple', .5),
         'coordinate_mapping': settings(config) if settings(config).get('enabled', False) else None,
         'blade_passing_frequency_hz': rpm * config.get('blade_count', 2) / 60,
         'source_note': source_note,

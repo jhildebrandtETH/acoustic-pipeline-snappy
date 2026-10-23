@@ -175,6 +175,12 @@ Courant-Grenze, Wandbehandlung und Akustik vor dem Start prüfen. Lokale Messpfa
 in `Parameters/acousticComparison.json` müssen zur eigenen Umgebung passen.
 Bestehende Aufträge verwenden ihre gesicherte Parameterkopie.
 
+Die Akustikeinstellungen entsprechen der normalen Pipeline: vorläufige obere
+Diagrammgrenze 5000 Hz und konfigurierbare untere Grenze bei 0,5 BPF.
+Der Report berechnet außerdem einen räumlichen Frequenz-Cap aus dem lokalen
+k-Feld und der Zellgröße; dieser Wert verändert die Diagrammgrenze nicht.
+Details: [räumlicher Frequenz-Cap](Parameters/acoustic-resolution.md).
+
 `Parameters/snappyGeometry.json` behält seinen Namen aus der ursprünglichen
 Pipeline. Beim Ansys-Import enthält es weiterhin die Größenangabe für die
 akustische Oberfläche sowie die Toleranzen der Volumen- und NCC-Prüfungen;

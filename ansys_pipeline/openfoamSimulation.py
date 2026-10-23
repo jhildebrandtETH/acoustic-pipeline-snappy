@@ -123,6 +123,9 @@ def openfoamSimulation(
                 start_foundation, simulation_working_directory, number_of_cores,
                 ALLOW_BAD_MESH, STATUS_CALLBACK, LIVE_OUTPUT,
             )
+            from tools.wall_omega import prepare_wall_omega
+            prepare_wall_omega(container, simulation_working_directory,
+                               STATUS_CALLBACK, LIVE_OUTPUT)
             if MESH_ONLY:
                 report_case_stage(
                     STATUS_CALLBACK, "meshOnly",
@@ -152,6 +155,11 @@ def openfoamSimulation(
                     detail=f"initializing from {Path(previous_simulation_path).name}",
                 ):
                     return False
+
+            if initialize_from_previous:
+                # Mapping must not replace values calculated for this mesh.
+                prepare_wall_omega(container, simulation_working_directory,
+                                   STATUS_CALLBACK, LIVE_OUTPUT)
 
             if parallel_run:
                 docker_run(container, simulation_working_directory,

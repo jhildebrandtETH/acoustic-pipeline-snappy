@@ -3,6 +3,20 @@ import math
 import numpy as np
 
 
+def minimum_frequency_hz(config, rpm):
+    """Configurable lower analysis/display bound; zero restores native coverage."""
+    multiple = config.get('minimum_frequency_bpf_multiple', 0.5)
+    blades = config.get('blade_count', 2)
+    if (isinstance(multiple, bool) or not isinstance(multiple, (int, float))
+            or not math.isfinite(multiple) or multiple < 0):
+        raise ValueError('minimum_frequency_bpf_multiple must be finite and nonnegative')
+    if isinstance(blades, bool) or not isinstance(blades, int) or blades < 1:
+        raise ValueError('blade_count must be a positive integer')
+    if not math.isfinite(rpm) or rpm <= 0:
+        raise ValueError('RPM must be positive and finite')
+    return multiple * rpm * blades / 60
+
+
 def add_bpf_markers(ax, rpm, blade_count=2):
     if isinstance(blade_count, bool) or int(blade_count) != blade_count or blade_count < 1:
         raise ValueError("blade_count must be a positive integer")

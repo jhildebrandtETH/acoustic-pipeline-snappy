@@ -99,6 +99,8 @@ def create_simulation_report(
         append_settings_report(c, settings)
         append_volume_report(c, mesh_volumes)
         append_thickness_report(c, layer_thickness)
+        from tools.acoustic_resolution import create_resolution_report_data, append_resolution_report
+        append_resolution_report(c, create_resolution_report_data(case_path))
         progress('embedding mesh visualization images', 95)
         visualization_summary = append_visualization_report(c, case_path, mesh_only=True)
         c.save()

@@ -30,17 +30,25 @@ Wall treatment changes only OpenFOAM dictionaries. Both choices use the same
 preprocessing, coupling and solver workflow, with no custom boundary code or
 runtime compilation.
 
-For resolved SST/DES, edit `Parameters/wallResolvedDict`: `omegaWallValue` is a
-complete OpenFOAM field value (`uniform ...` or `nonuniform List<scalar> ...`).
-Choose it from `60*nu/(0.075*y1^2)`, where `y1` is the wall-to-first-cell-centre
-distance. The supplied `1.92e7 1/s` is an example for air with `nu=1.5e-5 m2/s`
-and `y1=25 micrometres`, not an automatic mesh-dependent value. An unlayered mesh does not guarantee that cell-centre distance.
-For nonuniform spacing, prescribe face values in propeller patch order.
-Changing viscosity or near-wall spacing requires updating this dictionary.
+For resolved SST/DES, `Parameters/wallResolvedDict` enables `automaticOmega`.
+New-case preparation calculates `60*nu/(0.075*y1^2)` separately for every propeller
+face using OpenFOAM 13 `nearWallDist` and the case's `transportProperties` viscosity.
+This retains the existing fixedValue wall treatment; it does not switch to
+omegaWallFunction or constrain the adjacent internal omega cells. The initial
+`omegaWallValue` is a placeholder for NCC field loading, then the utility writes
+mesh-dependent values to `0/omega` before decomposition. Values are reapplied
+after optional field mapping. Inspect `log.wallOmega` for distance/value ranges.
 
-Existing generated cases retain their copied dictionaries. Regenerate the case
-from these templates to replace the former `codedFixedValue` omega boundary;
-resuming an already prepared case alone does not update its initial fields.
+The preparation utility is built with OpenFOAM's bundled `wmake` in the case's
+`mesh/wallOmega` directory; no Python dependency or runtime boundary compilation
+is needed. Failure to calculate valid positive finite distances stops preparation.
+Rigid rotor motion preserves these distances; this does not support deforming
+or remeshing walls without recalculation. Wall-function and k-epsilon cases skip it.
+
+Set `automaticOmega false` to retain a manually prescribed `omegaWallValue`.
+Changing mesh or viscosity requires preparing a new case. Existing order snapshots
+and resumed cases are not rewritten; start a fresh order from zero to adopt this
+change. Do not initialize from the already corrupted fifteen-layer solution.
 
 Model and boundary-condition references:
 - https://doc.cfd.direct/notes/cfd-general-principles/low-re-k-epsilon-models

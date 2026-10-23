@@ -50,6 +50,8 @@ def append_summary(canvas, case):
     from reportlab.lib.utils import simpleSplit
     from tools.acoustic_directivity import append_directivity_report
     report = Path(case) / 'report'
+    from tools.acoustic_resolution import create_resolution_report_data, append_resolution_report
+    append_resolution_report(canvas, create_resolution_report_data(case))
     path = report / 'acoustic-comparison.json'
     if not path.exists():
         append_directivity_report(canvas, case)

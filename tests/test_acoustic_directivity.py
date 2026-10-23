@@ -152,6 +152,8 @@ class DirectivityTests(unittest.TestCase):
             self.assertTrue(comparison['positions_match'])
             result = json.loads((case / 'report/acoustic-directivity.json').read_text())
             self.assertEqual(result['status'], 'complete')
+            self.assertAlmostEqual(result['covered_hz'][0], 4000 / 60)
+            self.assertEqual(result['covered_hz'][1], 3000)
             self.assertEqual(len(result['channels']), 5)
             for row in result['channels'].values():
                 for kind in ('simulated', 'measured'):

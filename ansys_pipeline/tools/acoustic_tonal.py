@@ -22,8 +22,10 @@ def write_cached_simulation_tonal(case_path, config):
                         microphone_channel=config.get('microphone_channel', 'simulation only'),
                         source_note=str(data['source_note']) if 'source_note' in data else '')
     frequency, density = welch_density(pressure, fs, len(pressure) / fs)
+    from tools.acoustic_annotations import minimum_frequency_hz
     return write_tonal_figures(report, {'simulated': [(frequency, density)]}, metadata,
-                              config, frequency[1], min(frequency[-1], config['maximum_frequency_hz']))
+                              config, max(frequency[1], minimum_frequency_hz(config, metadata['rpm'])),
+                              min(frequency[-1], config['maximum_frequency_hz']))
 
 
 def tonal_settings(config):

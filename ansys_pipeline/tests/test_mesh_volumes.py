@@ -84,6 +84,7 @@ class MeshVolumeTests(unittest.TestCase):
                     result.get('output_pdf', result.get('pdf_path'))).pages)
                 self.assertIn('Mesh Volume Distribution', text)
                 if mesh_only:
+                    self.assertIn('Spatial mesh frequency cap', text)
                     self.assertNotIn('Cell Courant Number Distribution', text)
                 else:
                     self.assertIn('Cell Courant Number Distribution', text)

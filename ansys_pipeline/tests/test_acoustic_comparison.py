@@ -134,7 +134,8 @@ class AcousticComparisonTests(unittest.TestCase):
             canvas = ReportCanvas(str(report / 'test-report.pdf'))
             append_comparison_report(canvas, root)
             self.assertEqual(canvas.images, ['acoustic-psd-overlay.png', 'acoustic-tonal-simulated.png', 'acoustic-tonal-measured.png'])
-            self.assertEqual(canvas.getPageNumber(), 3)
+            self.assertEqual(canvas.getPageNumber(), 4)
+            self.assertEqual(result['overall']['covered_hz'], [4000 / 60, 3000.])
             canvas.save()
             for name in ['acoustic-simulated.png', 'acoustic-measured.png', 'acoustic-overlay.png', 'acoustic-comparison.csv']:
                 self.assertTrue((report / name).is_file())

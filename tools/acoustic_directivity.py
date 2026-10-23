@@ -224,11 +224,13 @@ def create_directivity(case, config):
             measurement = measurements[channel]
             spectra[channel]['measured'].append(welch_density(measurement['pressure'], float(measurement['sampling_frequency']), duration))
     all_spectra = [s for groups in spectra.values() for group in groups.values() for s in group]
-    bounds = [max(float(f[1]) for f, _ in all_spectra),
+    from tools.acoustic_annotations import minimum_frequency_hz
+    bounds = [max(minimum_frequency_hz(config, float(data['rpm'])), *(float(f[1]) for f, _ in all_spectra)),
               min(config['maximum_frequency_hz'], *(float(f[-1]) for f, _ in all_spectra))]
     if bounds[0] >= bounds[1]:
         raise ValueError('No common positive-frequency range for directivity')
     summary = dict(status='complete', geometry=str(data['geometry']), rpm=float(data['rpm']),
+                   minimum_frequency_bpf_multiple=config.get('minimum_frequency_bpf_multiple', .5),
                    covered_hz=bounds, segment_duration_s=duration, planes=planes, channels={},
                    omitted_planes=omitted,
                    settings=settings(config), tonal_settings=config.get('tonal_analysis', {}),

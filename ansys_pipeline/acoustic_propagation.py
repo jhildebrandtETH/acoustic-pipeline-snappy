@@ -199,12 +199,18 @@ def run_acoustic_solver(
                 # Replace the library's unlabelled harmonic lines with labelled references.
                 for line in list(axis.lines)[1:]:
                     line.remove()
-                add_bpf_markers(axis, RPM, comparison_config.get("blade_count", 2))
                 frequencies = ax.frequencies_hz.detach().cpu().numpy()
                 levels = ax.spl_db[index].detach().cpu().numpy()
-                positive = frequencies > 0
+                from tools.acoustic_annotations import minimum_frequency_hz
+                low = max(float(frequencies[frequencies > 0][0]), minimum_frequency_hz(comparison_config, RPM))
+                high = min(float(frequencies[-1]), comparison_config['maximum_frequency_hz'])
+                if low >= high:
+                    raise ValueError('No acoustic frequency coverage above the configured BPF lower limit')
+                axis.set_xlim(left=low, right=high)
+                add_bpf_markers(axis, RPM, comparison_config.get("blade_count", 2))
+                positive = (frequencies > 0) & (frequencies >= low) & (frequencies <= high)
                 total = band_total_db(levels[positive])
-                axis.set_title(f"{RPM:g} RPM | band total {total:.2f} dB ({frequencies[positive][0]:.1f}-{frequencies[-1]:.1f} Hz)\n"
+                axis.set_title(f"{RPM:g} RPM | band total {total:.2f} dB ({frequencies[positive][0]:.1f}-{frequencies[positive][-1]:.1f} Hz)\n"
                                f"Unweighted | FFT spacing {ax.frequency_resolution_hz:.2f} Hz", fontsize=10)
                 axis.legend(loc="lower left", fontsize=8)
             fig.savefig(output_path, dpi=300, bbox_inches="tight")
