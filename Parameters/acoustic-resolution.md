@@ -90,3 +90,6 @@ cached pressure and upper plot limits are unchanged.
 
 Existing cases use their own Parameters copy. Rebuild reports to add the cap;
 rerun acoustic postprocessing from cached pressure to regenerate figures.
+
+Acoustic source output now matches the 65536 Hz measurements by physical time;
+see [acoustic sampling and solver timestep controls](acoustic-sampling.md).

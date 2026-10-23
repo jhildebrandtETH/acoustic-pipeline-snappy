@@ -371,3 +371,7 @@ Future flow atlases include uncropped XY/YZ sections through the shaft, covering
 Acoustic report spectra mark BPF and its harmonics using `blade_count` in `Parameters/acousticComparison.json` (default 2 for older cases). Markers are expected frequencies, not detected peaks. Comparisons also show unweighted band-limited total SPL, FFT spacing and segment duration; the existing experimental repeat envelope is retained. FFT spacing is not the effective Hann/Welch spectral resolution.
 
 Flow-field slice and blade-section images use ParaView Cell to Point Data interpolation for smooth colors. Interpolation is applied only for rendering and can reduce local extrema; saved simulation fields are unchanged. Courant-number maps and blade-wall diagnostics retain native cell values.
+
+Acoustic surface pressure and velocity are saved at **65536 Hz** using physical-time
+output in both pipeline versions. See [acoustic sampling](Parameters/acoustic-sampling.md)
+for adaptive timesteps, separate full-field output, and existing-case migration.

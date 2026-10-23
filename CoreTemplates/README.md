@@ -43,3 +43,10 @@ MRF uses a frozen rotor orientation. It does not capture sliding-mesh blade-pass
 interactions. Impermeable acoustics retains the existing rotating-source reconstruction
 from reference geometry; using MRF loads makes this a frozen-loading approximation.
 Use AMI for time-resolved aeroacoustic analysis.
+
+All supported templates sample acoustic surface p/U at 65536 Hz using physical
+write times. The main output controller also uses adjustableRunTime so OpenFOAM
+13 aligns adaptive steps with the surface writes. The parameter writeInterval
+now means seconds (default: ten acoustic samples), and timePrecision is 16.
+See [acoustic sampling](../Parameters/acoustic-sampling.md), including migration
+instructions for already generated cases.

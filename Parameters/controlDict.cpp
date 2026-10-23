@@ -3,7 +3,10 @@ startFrom latestTime;
 startTime 0;
 endTime 0.3;
 maxDeltaT 1e-5;
-writeInterval 10;
+// Full-field snapshots: 10 acoustic sampling intervals, in seconds.
+writeInterval 1.52587890625e-4;
+// Acoustic surface p/U output: 1/65536 s, matching the measurement rate.
+acousticWriteInterval 1.52587890625e-5;
 purgeWrite 10;
 adjustTimeStep yes;
 maxCo 5;

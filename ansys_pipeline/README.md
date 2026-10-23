@@ -195,3 +195,7 @@ Solver-/Kopplungswörterbücher; Grenzschichten kommen aus dem Fluent-Netz.
 Die Fehler bleiben im Mesh-Status und in den Prüflogs sichtbar. Das Übergehen
 einer Prüfung belegt weder numerische Stabilität noch physikalische Genauigkeit;
 die erweiterte checkMesh-Diagnostik und die Solververläufe separat beurteilen.
+
+Akustische Oberflächendaten p/U werden mit **65536 Hz** in festen physikalischen
+Zeitabständen gespeichert. Details zu adaptiven Zeitschritten, Volumenfeldausgabe
+und bestehenden Fällen: [Acoustic sampling](Parameters/acoustic-sampling.md).

@@ -24,7 +24,8 @@ deltaT          $deltaT;
 
 maxDeltaT       $maxDeltaT;
 
-writeControl    timeStep;
+// Required by OpenFOAM 13 to align adaptive steps with acoustic output.
+writeControl    adjustableRunTime;
 writeInterval   $writeInterval;
 
 ////- For testing with moveDynamicMesh
@@ -42,7 +43,7 @@ writeCompression off;
 
 timeFormat      general;
 
-timePrecision   6;
+timePrecision   16;
 
 runTimeModifiable true;
 
@@ -247,8 +248,9 @@ functions
         enabled         $impermeableEnabled;
         libs            ("libsampling.so");
 
-        writeControl    timeStep;
-        writeInterval   1;
+        // Physical-time sampling at 65536 Hz, independent of solver step count.
+        writeControl    adjustableRunTime;
+        writeInterval   $acousticWriteInterval;
         surfaceFormat   vtk;
 
         fields          (p U);
@@ -272,8 +274,9 @@ functions
         enabled         $permeableEnabled;
         libs            ("libsampling.so");
 
-        writeControl    timeStep;
-        writeInterval   1;
+        // Physical-time sampling at 65536 Hz, independent of solver step count.
+        writeControl    adjustableRunTime;
+        writeInterval   $acousticWriteInterval;
         surfaceFormat   vtk;
 
         fields          (p U);
