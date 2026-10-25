@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+from tools.runtime import IMAGE
 import re
 import shlex
 
@@ -48,7 +49,7 @@ def preflight(args):
         client = docker.from_env()
         try:
             client.ping()
-            client.images.get('microfluidica/openfoam:13')
+            client.images.get(IMAGE)
         finally:
             client.close()
     if not args.mesh_only:
@@ -92,19 +93,45 @@ def configured_layers(case):
 
 
 def docker_run(container, case, command, log_name, callback=None, live=False):
+    import time
     from tools import safe_exec, report_case_stage
     from tools.mesh_point_format import normalize_point_signs
     points = Path(case)/'constant/polyMesh/points'
+    started = time.time()
+    elapsed_start = time.perf_counter()
+    phases = {}
     if points.is_file():
+        report_case_stage(callback, 'meshPointFormat', 'checking point format before '+command[0])
         normalize_point_signs(points)
+    phases['point_check_before_s'] = time.perf_counter() - elapsed_start
     cmd = 'source /opt/openfoam13/etc/bashrc && set -o pipefail && cd /simulation && '
     cmd += shlex.join(command)+' 2>&1 | tee '+shlex.quote(log_name)
     report_case_stage(callback, command[0], shlex.join(command))
-    if not safe_exec(container, ['bash', '-c', cmd], command[0],
-                     print_output=live, status_callback=callback):
-        raise RuntimeError(f'{command[0]} failed; see {Path(case)/log_name}')
-    if points.is_file():
-        normalize_point_signs(points)
+    command_started = time.perf_counter()
+    succeeded = False
+    try:
+        succeeded = safe_exec(container, ['bash', '-c', cmd], command[0],
+                              print_output=live, status_callback=callback)
+        phases['utility_s'] = time.perf_counter() - command_started
+        if not succeeded:
+            raise RuntimeError(f'{command[0]} failed; see {Path(case)/log_name}')
+        post_started = time.perf_counter()
+        if points.is_file():
+            report_case_stage(callback, 'meshPointFormat', 'checking point format after '+command[0])
+            normalize_point_signs(points)
+        phases['point_check_after_s'] = time.perf_counter() - post_started
+    finally:
+        phases.setdefault('utility_s', time.perf_counter() - command_started)
+        total = time.perf_counter() - elapsed_start
+        # Timing diagnostics must never turn a successful utility into a failure.
+        try:
+            with (Path(case)/'preparation-timings.jsonl').open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps(dict(command=command, log=log_name,
+                    started_epoch_s=started, total_s=total,
+                    utility_succeeded=bool(succeeded), **phases))+'\n')
+        except OSError:
+            pass
+    report_case_stage(callback, command[0], f'{command[0]} complete in {total:.2f}s')
 
 
 def patch_info(case):

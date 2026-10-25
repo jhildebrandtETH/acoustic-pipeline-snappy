@@ -16,8 +16,21 @@ Punkte getrennt; die Zahl der Volumenzellen bleibt erhalten.
 
 ## Umgebung
 
-Wie bisher unter Linux/WSL mit Docker und `microfluidica/openfoam:13` arbeiten.
+Wie bisher unter Linux/WSL mit Docker und `acoustic-pipeline/openfoam:13-20260624` arbeiten.
 Eine Fluent-Lizenz ist für den Import nicht erforderlich.
+Vor dem ersten Lauf das gepinnte Image aus Linux/WSL bauen:
+
+```sh
+bash runtime/build.sh
+```
+
+Version, Update und Rücknahme: [Runtime](runtime/README.md).
+
+Die zuletzt getesteten expliziten Omega-Solverkontrollen wurden zurückgenommen.
+Neue SST-/DES-Aufträge verwenden wieder die gemeinsamen U/k/Omega-Kontrollen
+mit `tolerance 1e-6` ohne erzwungene Mindestiteration. Bestehende Aufträge
+behalten ihre gesicherten Vorlagen. Details:
+[Omega-Rücknahme](docs/runtime-crash-workarounds.md#omega-rollback-24-october-2026).
 
 Die Umgebungsdatei enthält die Python-Abhängigkeiten für Import, Solversteuerung,
 Akustik, Visualisierung, Courant-Diagnostik, Notebooks und Regressionstests.
@@ -86,6 +99,18 @@ Pro Datei kann eine JSON-Datei mit demselben Basisnamen diese Werte überschreib
 z.B. `MESH/mit_schichten.json`. Nur abweichende Schlüssel müssen darin stehen.
 Die Patch-Zuordnung lautet jeweils Zielname: vorhandener Quellname. Der Rotorname
 wird für die bestehenden Vorlagen auf `rotaryRegion` vereinheitlicht.
+
+Lokale Tip-Verfeinerungen dürfen zusätzliche Wandzonen `tip_negative` und
+`tip_positive` erzeugen. Auch Fluent-Namen wie
+`propeller-tip_negative-rotaryregion` bzw. die Variante mit Unterstrichen werden
+automatisch erkannt. Nach der Konvertierung fasst `createPatch` diese Flächen
+mit der Hauptwand zu `propeller` zusammen, ohne Zellen neu zu vernetzen. Damit
+gelten Wandbedingungen, Kräfte und akustische Abtastung für den vollständigen
+Propeller einschließlich beider Tips. Die lokalen Zellgrößen bleiben erhalten.
+Die Quellnamen und Flächenzahlen stehen in `mesh/import.json` und
+`mesh/geometry.json`; Details im Fallprotokoll `log.mergePropellerTips`.
+Andere unerwartete Randzonen werden weiterhin abgelehnt. Tip-Flächen müssen
+Wände sein und vollständig in der rotierenden Zellzone liegen.
 
 HDF5-Prismenzellflags werden als Quelldiagnostik gespeichert. Sie sind kein Beleg
 für vollständige Schichtabdeckung oder ausreichendes y+. Bei ASCII-Eingaben ist
@@ -165,7 +190,7 @@ OPENFOAM_TEMPLATE_SMOKE=1 python -m unittest discover -s tests -p test_template_
 ```
 
 Dieser Test benötigt Linux/WSL, Docker und das lokal verfügbare Image
-`microfluidica/openfoam:13`. Die Python-Testabhängigkeiten sind in der oben
+`acoustic-pipeline/openfoam:13-20260624`. Die Python-Testabhängigkeiten sind in der oben
 beschriebenen Pipeline-Umgebung enthalten.
 
 ## Einstellungen und Versionskontrolle
@@ -199,3 +224,7 @@ die erweiterte checkMesh-Diagnostik und die Solververläufe separat beurteilen.
 Akustische Oberflächendaten p/U werden mit **65536 Hz** in festen physikalischen
 Zeitabständen gespeichert. Details zu adaptiven Zeitschritten, Volumenfeldausgabe
 und bestehenden Fällen: [Acoustic sampling](Parameters/acoustic-sampling.md).
+
+## Temporäre Laufzeit-Workarounds
+
+Neue Fälle deaktivieren den eingebauten yPlus-Monitor und verwenden PCG/DIC für Druck und Druckkorrektur. Hintergrund, Grenzen und genaue Rücknahme: [Runtime crash workarounds](docs/runtime-crash-workarounds.md).

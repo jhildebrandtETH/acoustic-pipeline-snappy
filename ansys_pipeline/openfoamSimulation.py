@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 import docker
+from tools.runtime import IMAGE
 
 from tools.ansys_mesh import run_mesh
 from tools import _run_reconstruction_with_progress
@@ -99,7 +100,7 @@ def openfoamSimulation(
             labels = {"acoustic-pipeline-case": simulation_name}
             labels.update(slurm_options.pop('labels', {}))
             container = client.containers.run(
-                image=slurm_options.pop('image', 'microfluidica/openfoam:13'),
+                image=slurm_options.pop('image', IMAGE),
                 name=container_name,
                 volumes=my_volumes,
                 working_dir="/simulation",

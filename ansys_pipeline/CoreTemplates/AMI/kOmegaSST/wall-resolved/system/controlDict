@@ -95,6 +95,8 @@ functions
 
     yPlus
     {
+        // nearWallDist crash workaround; see docs/runtime-crash-workarounds.md.
+        enabled         false;
         type            yPlus;
         libs            ("libfieldFunctionObjects.so");
         patches         (propeller);

@@ -17,7 +17,9 @@ from tools.slurm import (Coordinator, SlurmClient, WorkerRegistry, configure_ord
                          refresh_saved_table, run_worker, script_text, show_status)
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = dict(time='01:00:00', mem='8G', runtime='docker', docker_image='microfluidica/openfoam:13',
+from tools.runtime import IMAGE
+
+CONFIG = dict(time='01:00:00', mem='8G', runtime='docker', docker_image=IMAGE,
               python='/env/bin/python', setup='', poll_interval=1)
 
 

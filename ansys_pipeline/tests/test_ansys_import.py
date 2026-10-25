@@ -183,6 +183,58 @@ class ImportTests(unittest.TestCase):
             (mesh/'neighbour').write_text('FoamFile { format ascii; }\n1\n(1)')
             self.assertEqual(am.cell_count(tmp),2)
 
+    def test_tip_wall_merge_accepts_fluent_names_and_preserves_face_count(self):
+        for tips in [('tip_negative', 'tip_positive'),
+                     ('propeller-tip_negative-rotaryregion', 'propeller-tip_positive-rotaryregion'),
+                     ('propeller_tip_negative_rotaryregion', 'propeller_tip_positive_rotaryregion')]:
+            with self.subTest(tips=tips), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);mesh=root/'constant/polyMesh';mesh.mkdir(parents=True)
+                (root/'mesh').mkdir()
+                (root/'mesh/import.json').write_text(json.dumps({'config':am.DEFAULTS}))
+                (mesh/'owner').write_text('FoamFile { format ascii; }\n3\n(0 0 0)')
+                (mesh/'neighbour').write_text('FoamFile { format ascii; }\n1\n(1)')
+                (mesh/'boundary').write_text('\n'.join(
+                    f'{name}\n{{type wall; nFaces {count}; startFace 1;}}'
+                    for name,count in [('propeller',10),(tips[0],2),(tips[1],3),('walls',4)]))
+                def native_merge(command, log):
+                    self.assertEqual(command[0],'createPatch')
+                    self.assertIn('-dict',command)
+                    self.assertEqual(log,'log.mergePropellerTips')
+                    self.assertTrue((root/'system/createPropellerPatchDict').is_file())
+                    (mesh/'boundary').write_text('propeller\n{type wall; nFaces 15; startFace 1;}\nwalls\n{type wall; nFaces 4; startFace 16;}')
+                am.merge_propeller_tip_patches(root,native_merge)
+                merged=json.loads((root/'mesh/import.json').read_text())['propeller_patch_merge']
+                self.assertEqual(merged['merged_faces'],15)
+                self.assertEqual(merged['source_face_counts'],{'propeller':10,tips[0]:2,tips[1]:3})
+                self.assertEqual(merged['cells'],2)
+
+    def test_tip_wall_merge_does_not_accept_nonwall_or_unrelated_patches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);mesh=root/'constant/polyMesh';mesh.mkdir(parents=True)
+            (root/'mesh').mkdir()
+            (root/'mesh/import.json').write_text(json.dumps({'config':am.DEFAULTS}))
+            (mesh/'boundary').write_text('propeller\n{type wall; nFaces 10;}\ntip_negative\n{type patch; nFaces 2;}')
+            with self.assertRaisesRegex(ValueError,'must be a wall'):
+                am.merge_propeller_tip_patches(root,lambda *args:self.fail('Must reject before merging'))
+            # Old meshes and unrelated names do not trigger a merge. Normal
+            # import validation continues to reject unexpected extra patches.
+            (mesh/'boundary').write_text('propeller\n{type wall; nFaces 10;}\ntip_unknown\n{type wall; nFaces 2;}')
+            am.merge_propeller_tip_patches(root,lambda *args:self.fail('Unrelated patch must not be merged'))
+            self.assertNotIn('propeller_patch_merge',json.loads((root/'mesh/import.json').read_text()))
+
+    def test_tip_wall_merge_rejects_lost_faces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);mesh=root/'constant/polyMesh';mesh.mkdir(parents=True)
+            (root/'mesh').mkdir()
+            (root/'mesh/import.json').write_text(json.dumps({'config':am.DEFAULTS}))
+            (mesh/'owner').write_text('FoamFile { format ascii; }\n3\n(0 0 0)')
+            (mesh/'neighbour').write_text('FoamFile { format ascii; }\n1\n(1)')
+            (mesh/'boundary').write_text('propeller\n{type wall; nFaces 10;}\ntip_negative\n{type wall; nFaces 2;}')
+            def lose_faces(*args):
+                (mesh/'boundary').write_text('propeller\n{type wall; nFaces 10;}')
+            with self.assertRaisesRegex(ValueError,'preserve all wall faces'):
+                am.merge_propeller_tip_patches(root,lose_faces)
+
     def test_visualization_uses_measured_import_diameter(self):
         from tools.visualization import visualization_settings
         with tempfile.TemporaryDirectory() as tmp:

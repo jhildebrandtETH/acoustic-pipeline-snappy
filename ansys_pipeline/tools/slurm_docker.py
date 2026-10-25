@@ -12,7 +12,7 @@ import re
 import shlex
 import signal
 
-IMAGE = 'microfluidica/openfoam:13'
+from tools.runtime import IMAGE
 _RUNTIME = ContextVar('slurm_docker_runtime', default=None)
 
 

@@ -211,6 +211,72 @@ def cell_count(case):
     return largest+1
 
 
+def merge_propeller_tip_patches(case, run):
+    """Group optional Fluent tip-sizing walls into the physical propeller wall.
+
+    createPatch remaps faces and faceZones consistently; cells and refinement
+    are retained. Unknown patches still fail the normal strict import checks.
+    """
+    from tools.snappy_pipeline import write, header
+    case = Path(case)
+    path = case/'mesh/import.json'
+    record = json.loads(path.read_text())
+    config = record['config']
+    propeller = config['patches']['propeller']
+    rotor = config['rotorCellZone']
+    # Fluent may combine the physical wall, named face selection and region.
+    # Accept the original hyphens and OpenFOAM-normalized underscores.
+    pattern = re.compile(
+        r'^(?:'+re.escape(propeller)+r'[-_])?tip_(?:negative|positive)'
+        r'(?:[-_]'+re.escape(rotor)+r')?$', re.I)
+    boundary = case/'constant/polyMesh/boundary'
+    patches = _zone_entries(boundary)
+    tips = [name for name in patches if name != propeller and pattern.fullmatch(name)]
+    if not tips:
+        return
+    if propeller not in patches:
+        raise ValueError(f'Missing main propeller wall {propeller}')
+    sources = [propeller, *tips]
+    counts = {}
+    for name in sources:
+        body = patches[name]
+        if not re.search(r'\btype\s+wall\s*;', body):
+            raise ValueError(f'Propeller sizing patch {name} must be a wall')
+        count = re.search(r'\bnFaces\s+(\d+)\s*;', body)
+        if not count:
+            raise ValueError(f'Missing face count on propeller sizing patch {name}')
+        counts[name] = int(count[1])
+    ncells = cell_count(case)
+    dictionary = 'system/createPropellerPatchDict'
+    write(case/dictionary, header('createPropellerPatchDict')+f'''
+pointSync false;
+patches
+(
+    {{
+        name {propeller};
+        patchInfo {{ type wall; }}
+        constructFrom patches;
+        patches ({' '.join(sources)});
+    }}
+);
+''')
+    run(['createPatch', '-dict', dictionary, '-overwrite'], 'log.mergePropellerTips')
+    merged = _zone_entries(boundary)
+    count = re.search(r'\bnFaces\s+(\d+)\s*;', merged.get(propeller, ''))
+    if not count or int(count[1]) != sum(counts.values()):
+        raise ValueError('Propeller tip merge did not preserve all wall faces')
+    if cell_count(case) != ncells:
+        raise ValueError('Propeller tip merge changed the cell count')
+    # Some versions retain empty source entries until the import cleanup.
+    for name in tips:
+        if name in merged and not re.search(r'\bnFaces\s+0\s*;', merged[name]):
+            raise ValueError(f'Propeller tip patch {name} was not fully merged')
+    record['propeller_patch_merge'] = dict(
+        target=propeller, source_face_counts=counts,
+        merged_faces=sum(counts.values()), cells=ncells)
+    write(path, json.dumps(record, indent=2)+'\n')
+
+
 def prepare_converted_mesh(case):
     """Validate the actual imported regions and derive geometry for reporting."""
     import trimesh
@@ -307,6 +373,8 @@ def prepare_converted_mesh(case):
         acoustic_sphere_radius_m=radius if record['acoustic_surface']=='permeable' else None,
         settings=config_geometry, input_cells=ncells, rotor_cells=int(len(rotor)),
         reference_surface='Extracted from the imported mesh; no original STL required')
+    if 'propeller_patch_merge' in record:
+        geometry['propeller_patch_merge'] = record['propeller_patch_merge']
     write(case/'mesh/geometry.json', json.dumps(geometry,indent=2)+'\n')
     write(case/'system/createBafflesDict', header('createBafflesDict')+f'''
 internalFacesOnly true;
@@ -359,6 +427,7 @@ def run_mesh(container, case, cores, allow_bad, callback=None, live=False):
     write(all_cells, header('importAllCells').replace('class dictionary;', 'class cellSet;')
           +str(ncells)+'\n(\n'+''.join(str(i)+'\n' for i in range(ncells))+')\n')
     run(['subsetMesh','-cellSet','importAllCells','-noFields'], 'log.removeUnusedPoints')
+    merge_propeller_tip_patches(case, run)
     validated_cells = prepare_converted_mesh(case)
     if validated_cells != ncells:
         raise ValueError('Point cleanup changed the cell count')

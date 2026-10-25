@@ -4,7 +4,7 @@
   "time": "04:00:00",
   "mem": "32G",
   "runtime": "docker",
-  "docker_image": "microfluidica/openfoam:13",
+  "docker_image": "acoustic-pipeline/openfoam:13-20260624",
   "setup": "",
   "python": "/path/to/ansys_pipeline_env/bin/python",
   "poll_interval": 10

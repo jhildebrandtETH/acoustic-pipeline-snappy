@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from tools.templates import template_directory
+from tools.runtime import IMAGE
 from tools.wall_omega import wall_omega_command
 
 
@@ -68,7 +69,7 @@ mergePatchPairs ();
                     result = subprocess.run([
                         'docker', 'run', '--rm', '--user', f'{os.getuid()}:{os.getgid()}',
                         '-v', f'{case}:/simulation', '-w', '/simulation', '--entrypoint', 'bash',
-                        'microfluidica/openfoam:13', '-lc',
+                        IMAGE, '-lc',
                         'source /opt/openfoam13/etc/bashrc && '
                         'blockMesh > log.blockMesh 2>&1 && '
                         'createNonConformalCouples -fields rotaryRegion_slave rotaryRegion' +

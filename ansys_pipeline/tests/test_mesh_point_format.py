@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from tools.mesh_point_format import normalize_point_signs
 from tools import snappy_pipeline
+from tools import mesh_point_format
 
 HEADER = b'FoamFile\n{\nformat ascii;\nclass vectorField;\nobject points;\n}\n'
 
@@ -60,6 +61,38 @@ class PointFormatTests(unittest.TestCase):
         with patch('tools.safe_exec', return_value=False), patch('tools.report_case_stage'):
             with self.assertRaisesRegex(RuntimeError, 'checkMesh failed'):
                 snappy_pipeline.docker_run(None, self.case, ['checkMesh'], 'log.check', None, False)
+
+    def test_unchanged_file_is_not_read_again(self):
+        self.path.write_bytes(HEADER + b'1\n(\n(1 2 3)\n)\n')
+        normalize_point_signs(self.path)
+        with patch.object(Path, 'open', side_effect=AssertionError('unchanged file was reread')):
+            self.assertEqual(normalize_point_signs(self.path), 0)
+
+    def test_atomic_replacement_invalidates_validation_cache(self):
+        clean = HEADER + b'1\n(\n(1 2 3)\n)\n'
+        self.path.write_bytes(clean)
+        normalize_point_signs(self.path)
+        replacement = self.path.with_name('new-points')
+        replacement.write_bytes(clean.replace(b'1 2', b'+1 2'))
+        replacement.replace(self.path)
+        self.assertEqual(normalize_point_signs(self.path), 1)
+        self.assertEqual(self.path.read_bytes(), clean)
+
+    def test_repair_across_block_boundaries_and_missing_final_newline(self):
+        data = HEADER + b'2\n(\n(+1 2 3)\n(4 +5 6)\n)'
+        self.path.write_bytes(data)
+        with patch.object(mesh_point_format, '_SCAN_BYTES', 5):
+            self.assertEqual(normalize_point_signs(self.path), 2)
+        self.assertEqual(self.path.read_bytes(), data.replace(b'+1', b'1').replace(b'+5', b'5'))
+
+    def test_wrapper_records_format_and_utility_timings(self):
+        self.path.write_bytes(HEADER + b'0\n(\n)\n')
+        with patch('tools.safe_exec', return_value=True), patch('tools.report_case_stage'):
+            snappy_pipeline.docker_run(None, self.case, ['checkMesh'], 'log.check', None, False)
+        entry = json.loads((self.case/'preparation-timings.jsonl').read_text())
+        self.assertTrue(entry['utility_succeeded'])
+        for key in ['point_check_before_s', 'utility_s', 'point_check_after_s', 'total_s']:
+            self.assertGreaterEqual(entry[key], 0)
 
 
 if __name__ == '__main__':
