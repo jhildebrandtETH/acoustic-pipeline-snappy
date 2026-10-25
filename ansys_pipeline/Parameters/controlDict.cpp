@@ -9,6 +9,8 @@ writeInterval 1.52587890625e-4;
 acousticWriteInterval 1.52587890625e-5;
 purgeWrite 10;
 adjustTimeStep yes;
+// Escape output-alignment timestep plateaus while retaining Co and dt caps.
+deltaTFactor 1.5;
 maxCo 5;
 
 impermeableEnabled no;

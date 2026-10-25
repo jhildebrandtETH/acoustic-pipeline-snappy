@@ -75,3 +75,32 @@ uniformly sampled segment after the change. Legacy templates are not migrated.
 
 The PDF settings report records the resolved impermeable/permeable writer
 settings separately from the solver and full-field output controls.
+
+
+## Adaptive timestep growth in the ANSYS pipeline
+
+The ANSYS pipeline sets `deltaTFactor 1.5` in `Parameters/controlDict.cpp`,
+included at the top level of every supported template's `system/controlDict`.
+Foundation OpenFOAM 13 defaults to 1.2. Combined with exact output-time
+alignment, that default can repeatedly round a proposed increase back to
+five steps per acoustic sample (3.0517578125 microseconds per step).
+The 1.5 growth factor escapes that plateau; when other limits permit it,
+two steps per acoustic sample give 7.62939453125 microseconds per step.
+
+This changes the permitted growth per step, not the acoustic cadence or
+the timestep limits: sampling remains 65536 Hz, `maxCo` remains 5 (including
+the startup function object), and `maxDeltaT` remains 1e-5 seconds. Smaller
+steps remain possible when the flow requires them. Controller arithmetic is
+covered by a regression test; CFD stability and acoustic temporal accuracy
+still require a short solver check after deploying to the server.
+
+New cases use the setting automatically. Existing cases and study snapshots
+retain their dictionaries: add `deltaTFactor 1.5;` at the top level of their
+`system/controlDict` (or its included parameter file), then restart from a
+saved time. OpenFOAM 13 reads this factor in the solver constructor, so do
+not rely on editing it during a live run. Keep changed-timestep segments
+identifiable for mesh-study comparisons. The normal snappy pipeline uses the same setting.
+
+Implementation references: [solver growth factor](https://github.com/OpenFOAM/OpenFOAM-13/blob/master/src/finiteVolume/solver/solver.C),
+[foamRun timestep selection](https://github.com/OpenFOAM/OpenFOAM-13/blob/master/applications/solvers/foamRun/setDeltaT.C),
+and [output-time alignment](https://github.com/OpenFOAM/OpenFOAM-13/blob/master/src/OpenFOAM/db/Time/Time.C).
