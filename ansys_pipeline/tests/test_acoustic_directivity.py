@@ -185,16 +185,22 @@ class DirectivityTests(unittest.TestCase):
             config['microphone_channel'] = '8'
             (case / 'Parameters').mkdir()
             (case / 'Parameters/acousticComparison.json').write_text(json.dumps(config))
-            for time in ('0', '.1', '.2'):
+            (case / 'Parameters/controlDict.cpp').write_text('acousticWriteInterval 0.000125;')
+            for time in map(str, np.arange(801) / 8000):
                 directory = case / 'postProcessing/writePatchFields' / time
                 directory.mkdir(parents=True)
                 (directory / 'propeller.vtk').write_text('placeholder for mocked source loader')
             _, _, mapped = resolve_observers(case, 4000, config)
             times = np.arange(8000) / 8000
             pressures = np.array([(i + 1) * np.sin(2*np.pi*400*times) for i in range(len(ids))])
-            result = SimpleNamespace(observer_times_s=Tensor(times), total_pressure_pa=Tensor(pressures),
-                                     observer_m=Tensor(mapped), maximum_delay_s=np.zeros(len(ids)))
-            result.for_observer = Mock(return_value=SimpleNamespace())
+            import torch
+            from acousticSolver.src.foamacoustics.core.result import F1AResult
+            values = torch.tensor(pressures, dtype=torch.float64)
+            result = F1AResult(observer_times_s=torch.tensor(times, dtype=torch.float64),
+                               thickness_pressure_pa=torch.zeros_like(values), loading_pressure_pa=values,
+                               total_pressure_pa=values, observer_m=torch.tensor(mapped), rpm=4000,
+                               maximum_delay_s=torch.zeros(len(ids)), response_delay_s=None,
+                               source_time_count=801, propagation_algorithm='nonuniform')
             solver = Mock()
             solver.predict.return_value = result
             def comparison(case_path, unused_config):
@@ -205,10 +211,15 @@ class DirectivityTests(unittest.TestCase):
                  patch.object(stage, 'comparison_or_status', side_effect=comparison):
                 stage.run_acoustic_solver('impermeable', case, 4000)
             self.assertEqual(solver.predict.call_count, 1)
+            metadata = json.loads((case / 'report/acoustic-resampling.json').read_text())
+            self.assertEqual(metadata['status'], 'complete')
+            self.assertEqual(metadata['method'], 'linear')
+            self.assertEqual(metadata['target_sampling_frequency_hz'], 8000)
             np.testing.assert_allclose(solver.predict.call_args.args[0].cpu().numpy(), mapped)
-            result.for_observer.assert_called_once_with(ids.index('8'))
             with np.load(case / 'report/acoustic-observers.npz') as multi, np.load(case / 'report/acoustic-pressure.npz') as single:
                 self.assertEqual(multi['pressure_pa'].shape[0], 5)
+                self.assertEqual(float(multi['sampling_frequency_hz']), 8000)
+                np.testing.assert_allclose(np.diff(multi['time_s']), 1 / 8000)
                 np.testing.assert_array_equal(single['pressure_pa'], multi['pressure_pa'][ids.index('8')])
 
 

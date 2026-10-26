@@ -1,5 +1,9 @@
 # Temporary runtime crash workarounds
 
+## Y-plus restored — 26 October 2026
+
+The yPlus function is enabled again in all nine ANSYS templates at the user request. It calculates every timestep and writes its field at normal write times. A separate propellerYPlusMean surfaceFieldValue function records the propeller area-average every timestep, preserving its time history despite purgeWrite. This supersedes the disabled-yPlus workaround below. It does not prove the earlier wall-distance crash is fixed; the newly enabled diagnostic requires validation in subsequent runs. Existing cases and order snapshots are unchanged.
+
 Applied to the normal ANSYS pipeline templates on 23 October 2026. These settings apply to all nine AMI/MRF turbulence/wall-treatment templates under `CoreTemplates`. They are diagnostic workarounds motivated by crashes in the roundedV2 rotating-mesh case; they do not establish mesh validity, physical accuracy, acoustic accuracy, or long-run stability.
 
 ## Changes and reasons

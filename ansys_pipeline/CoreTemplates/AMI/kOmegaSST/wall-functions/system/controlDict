@@ -24,8 +24,8 @@ deltaT          $deltaT;
 
 maxDeltaT       $maxDeltaT;
 
-// Required by OpenFOAM 13 to align adaptive steps with acoustic output.
-writeControl    adjustableRunTime;
+// Save full fields by elapsed time without aligning the solver timestep.
+writeControl    runTime;
 writeInterval   $writeInterval;
 
 ////- For testing with moveDynamicMesh
@@ -95,16 +95,26 @@ functions
 
     yPlus
     {
-        // nearWallDist crash workaround; see docs/runtime-crash-workarounds.md.
-        enabled         false;
-        type            yPlus;
-        libs            ("libfieldFunctionObjects.so");
-        patches         (propeller);
-        log             yes;
-        writeControl    writeTime;
+        enabled true;
+        type yPlus;
+        libs ("libfieldFunctionObjects.so");
+        log yes;
+        executeControl timeStep;
+        executeInterval 1;
+        writeControl writeTime;
+    }
 
-        // Enable to also view y+ distribution in paraFoam
-        // objects         ();
+    propellerYPlusMean
+    {
+        type surfaceFieldValue;
+        libs ("libfieldFunctionObjects.so");
+        patch propeller;
+        operation areaAverage;
+        fields (yPlus);
+        writeFields false;
+        log yes;
+        writeControl timeStep;
+        writeInterval 1;
     }
 
     wallShear
@@ -250,9 +260,9 @@ functions
         enabled         $impermeableEnabled;
         libs            ("libsampling.so");
 
-        // Physical-time sampling at 65536 Hz, independent of solver step count.
-        writeControl    adjustableRunTime;
-        writeInterval   $acousticWriteInterval;
+        // Retain every adaptive step; acoustic pressure is resampled in postprocessing.
+        writeControl    timeStep;
+        writeInterval   1;
         surfaceFormat   vtk;
 
         fields          (p U);
@@ -276,9 +286,9 @@ functions
         enabled         $permeableEnabled;
         libs            ("libsampling.so");
 
-        // Physical-time sampling at 65536 Hz, independent of solver step count.
-        writeControl    adjustableRunTime;
-        writeInterval   $acousticWriteInterval;
+        // Retain every adaptive step; acoustic pressure is resampled in postprocessing.
+        writeControl    timeStep;
+        writeInterval   1;
         surfaceFormat   vtk;
 
         fields          (p U);

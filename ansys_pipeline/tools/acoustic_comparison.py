@@ -69,7 +69,7 @@ def resolve_observer_position(case_path, rpm, config):
     return reference.tolist()
 
 
-def cache_result(result, case_path, rpm, *, rotations):
+def cache_result(result, case_path, rpm, *, rotations, sample_interval_s=None):
     """Retain the requested final rotations, limited to the fully arrived tail."""
     if not np.isfinite(rotations) or rotations <= 0 or not np.isfinite(rpm) or rpm <= 0:
         raise ValueError('Analysis rotations and RPM must be positive and finite')
@@ -84,15 +84,15 @@ def cache_result(result, case_path, rpm, *, rotations):
     times, pressure = times[mask], pressure[mask]
     if len(times) < 8:
         raise ValueError('Too few fully arrived acoustic samples')
-    step = np.median(np.diff(times))
-    if np.max(np.diff(times)) > 1.5 * step:
-        raise ValueError('Observer trace has sampling gaps; cannot form a reliable spectrum')
-    grid = np.arange(times[0], times[-1], step)
-    pressure = np.interp(grid, times, pressure)
+    from tools.acoustic_time import uniform_pressure
+    grid, pressure, step = uniform_pressure(times, pressure, sample_interval_s)
+    if len(grid) < 8:
+        raise ValueError('Too few fully arrived uniform acoustic samples')
     case_path = Path(case_path)
     geometry = case_geometry(case_path)
     np.savez_compressed(case_path / 'report/acoustic-pressure.npz', pressure_pa=pressure,
-                        sampling_frequency_hz=1 / step, rpm=rpm, geometry=geometry,
+                        sampling_frequency_hz=1 / step, time_s=grid, interpolation_method='linear',
+                        rpm=rpm, geometry=geometry,
                         requested_rotations=rotations, requested_duration_s=rotations * 60 / rpm,
                         observer_m=result.observer_m.detach().cpu().numpy())
 

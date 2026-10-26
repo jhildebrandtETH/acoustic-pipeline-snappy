@@ -221,8 +221,10 @@ Die Fehler bleiben im Mesh-Status und in den Prüflogs sichtbar. Das Übergehen
 einer Prüfung belegt weder numerische Stabilität noch physikalische Genauigkeit;
 die erweiterte checkMesh-Diagnostik und die Solververläufe separat beurteilen.
 
-Akustische Oberflächendaten p/U werden mit **65536 Hz** in festen physikalischen
-Zeitabständen gespeichert. Details zu adaptiven Zeitschritten, Volumenfeldausgabe
+Akustische Oberflächendaten p/U werden an jedem adaptiven Solver-Zeitschritt
+gespeichert; `maxDeltaT` ist auf **1/65536 s** begrenzt. Die Nachverarbeitung
+interpoliert die akustischen Drucksignale auf ein gleichmäßiges **65536-Hz**-Raster.
+Details zu adaptiven Zeitschritten, Volumenfeldausgabe
 und bestehenden Fällen: [Acoustic sampling](Parameters/acoustic-sampling.md).
 
 ## Temporäre Laufzeit-Workarounds
