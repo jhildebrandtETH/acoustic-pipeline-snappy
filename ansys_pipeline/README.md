@@ -230,3 +230,29 @@ und bestehenden Fällen: [Acoustic sampling](Parameters/acoustic-sampling.md).
 ## Temporäre Laufzeit-Workarounds
 
 Neue Fälle deaktivieren den eingebauten yPlus-Monitor und verwenden PCG/DIC für Druck und Druckkorrektur. Hintergrund, Grenzen und genaue Rücknahme: [Runtime crash workarounds](docs/runtime-crash-workarounds.md).
+
+### Y-plus coverage in simulation reports
+
+Wall-treatment reports use **surface-area-weighted** y-plus mean, median and coverage
+as the primary metrics. Equal-face statistics remain explicitly labelled diagnostics.
+The PDF chart and `report/yplus_distribution.json` describe one latest reconstructed
+snapshot, not a revolution average. Exact patch selection includes the hub whenever
+it belongs to that named patch. Areas use the mesh instances resolved at the field time,
+including moved points. Unavailable areas are reported explicitly; face statistics never
+silently substitute for area statistics. The legacy `average_yplus` report-summary field
+now contains the area-weighted mean (or null when unavailable); the old face mean is
+available as `yplus_stats.face_weighted.mean`.
+
+### Separate blade and hub walls
++
++Imported meshes may preserve `propeller_blade` and `propeller_hub` as separate
++walls. Place a JSON sidecar with the same mesh basename next to the mesh and
++map `patches.propeller` to `propeller_blade`; add
++`patches.propeller_hub: "propeller_hub"` alongside inlet/outlet/walls.
++The importer names the blade wall `propeller` internally and keeps the hub
++as `propeller_hub`. Both receive consistent moving/rotating wall conditions;
++total forces and impermeable acoustic samples include both. Blade y-plus and
++first-cell statistics use only `propeller`, with the exclusion recorded in the
++geometry metadata and report. Layer generation remains part of the supplied
++Fluent mesh; the importer does not add or remove layers.
++

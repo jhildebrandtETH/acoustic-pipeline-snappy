@@ -531,41 +531,8 @@ def create_simulation_report(
                 if y_table < 40:
                     break
 
-    if yplus_plot is not None:
-        c.showPage()
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(50, h - 50, "Wall Treatment Evaluation")
-
-        if yplus_stats is not None:
-            c.setFont("Helvetica", 11)
-            c.drawString(
-                50,
-                h - 80,
-                f"Patch: {yplus_stats['patch_name']} | Time: {yplus_stats['time_dir']} | Faces: {yplus_stats['n_faces']}",
-            )
-            c.drawString(
-                50,
-                h - 100,
-                f"Average y+: {yplus_stats['average_yplus']:.2f} | Median y+: {yplus_stats['median_yplus']:.2f} "
-                f"| Min/Max y+: {yplus_stats['min_yplus']:.2f} / {yplus_stats['max_yplus']:.2f}",
-            )
-            c.drawString(
-                50,
-                h - 120,
-                f"Surface share: y+ < 5: {yplus_stats['share_yplus_lt_5_percent']:.1f}% | "
-                f"5 <= y+ <= 30: {yplus_stats['share_yplus_5_to_30_percent']:.1f}% | "
-                f"y+ > 30: {yplus_stats['share_yplus_gt_30_percent']:.1f}%",
-            )
-
-        c.drawImage(
-            str(yplus_plot),
-            50,
-            h - 500,
-            width=500,
-            height=330,
-            preserveAspectRatio=True,
-            mask="auto",
-        )
+    from tools.yplus_reporting import append_yplus_report
+    append_yplus_report(c, yplus_plot, yplus_stats)
 
     # -----------------------------
     # Acoustic Evaluation

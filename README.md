@@ -375,3 +375,15 @@ Flow-field slice and blade-section images use ParaView Cell to Point Data interp
 Acoustic surface pressure and velocity are saved at **65536 Hz** using physical-time
 output in both pipeline versions. See [acoustic sampling](Parameters/acoustic-sampling.md)
 for adaptive timesteps, separate full-field output, and existing-case migration.
+
+### Y-plus coverage in simulation reports
+
+Wall-treatment reports use **surface-area-weighted** y-plus mean, median and coverage
+as the primary metrics. Equal-face statistics remain explicitly labelled diagnostics.
+The PDF chart and `report/yplus_distribution.json` describe one latest reconstructed
+snapshot, not a revolution average. Exact patch selection includes the hub whenever
+it belongs to that named patch. Areas use the mesh instances resolved at the field time,
+including moved points. Unavailable areas are reported explicitly; face statistics never
+silently substitute for area statistics. The legacy `average_yplus` report-summary field
+now contains the area-weighted mean (or null when unavailable); the old face mean is
+available as `yplus_stats.face_weighted.mean`.

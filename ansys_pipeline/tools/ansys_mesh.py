@@ -56,9 +56,9 @@ def read_config(parameters, source):
     scale = config['scale']
     if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not math.isfinite(scale) or scale <= 0:
         raise ValueError('Imported mesh scale must be finite and positive')
-    if set(config['patches']) != set(DEFAULTS['patches']):
-        raise ValueError('Patch mapping must specify propeller, inlet, outlet and walls')
-    if len(set(config['patches'].values())) != 4:
+    if set(config['patches']) not in (set(DEFAULTS['patches']), set(DEFAULTS['patches']) | {'propeller_hub'}):
+        raise ValueError('Patch mapping must specify propeller, inlet, outlet and walls, with optional propeller_hub')
+    if len(set(config['patches'].values())) != len(config['patches']):
         raise ValueError('Source patch names must be distinct')
     for value in [config['rotorCellZone'], config['rotorFaceZone'], *config['patches'].values()]:
         if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]*', value):
@@ -277,6 +277,31 @@ patches
     write(path, json.dumps(record, indent=2)+'\n')
 
 
+def configure_separate_hub(case):
+    """Retain the hub physically, but keep blade y-plus and layer statistics separate."""
+    case = Path(case)
+    for field in (case/'0').iterdir():
+        if not field.is_file():
+            continue
+        text = field.read_text(encoding='utf-8')
+        if not re.search(r'\bboundaryField\s*\{', text):
+            continue
+        # Template wall conditions have no nested dictionaries.
+        if re.search(r'(?m)^\s*"?propeller_hub"?\s*\{', text):
+            continue
+        match = re.search(r'(?m)^\s*"?propeller"?\s*\{([^{}]*)\}', text)
+        if not match:
+            raise ValueError(f'Missing simple propeller boundary condition in {field}')
+        text = text[:match.end()]+'\n    propeller_hub\n    {'+match[1]+'}\n'+text[match.end():]
+        field.write_text(text, encoding='utf-8')
+    control = case/'system/controlDict'
+    text = control.read_text(encoding='utf-8')
+    # Total forces and impermeable acoustic sampling need the complete solid wall.
+    # The singular `patch propeller` y-plus area-average remains blade-only.
+    text = re.sub(r'\bpatches\s*\(\s*propeller\s*\)', 'patches (propeller propeller_hub)', text)
+    control.write_text(text, encoding='utf-8')
+
+
 def prepare_converted_mesh(case):
     """Validate the actual imported regions and derive geometry for reporting."""
     import trimesh
@@ -313,7 +338,11 @@ def prepare_converted_mesh(case):
         patches = {name: body for name, body in patches.items() if name not in empty}
         write(mesh/'boundary', header('boundary').replace('class dictionary;', 'class polyBoundaryMesh;')
               +str(len(patches))+'\n(\n'+''.join(name+'\n{'+body+'}\n' for name,body in patches.items())+')\n')
-    if set(patches) != {'propeller','inlet','outlet','walls'}:
+    expected_patches = {'propeller','inlet','outlet','walls'}
+    separate_hub = 'propeller_hub' in config['patches']
+    if separate_hub:
+        expected_patches.add('propeller_hub')
+    if set(patches) != expected_patches:
         raise ValueError(f'Expected only propeller/inlet/outlet/walls before baffles, got {list(patches)}')
     def patch_range(name):
         body = patches[name]
@@ -322,7 +351,12 @@ def prepare_converted_mesh(case):
         if count < 1 or start < len(neighbour) or start+count > len(owner):
             raise ValueError(f'Empty or invalid patch {name}')
         return range(start, start+count)
-    wall_faces = patch_range('propeller')
+    wall_faces = list(patch_range('propeller'))
+    if separate_hub:
+        wall_faces += list(patch_range('propeller_hub'))
+        if not re.search(r'\btype\s+wall\s*;', patches['propeller_hub']):
+            raise ValueError('The separate hub must be a wall patch')
+        configure_separate_hub(case)
     if not np.all(mask[owner[list(wall_faces)]]):
         raise ValueError('Every propeller wall face must belong to the rotating cell zone')
     volume = 0.0
@@ -334,7 +368,7 @@ def prepare_converted_mesh(case):
             centre = polygon.mean(axis=0)
             for a, b in zip(polygon, np.roll(polygon, -1, axis=0)):
                 volume += float(np.dot(centre, np.cross(a, b)))/6
-                if name == 'propeller' and np.linalg.norm(np.cross(a-centre, b-centre)) > 0:
+                if name in ('propeller', 'propeller_hub') and np.linalg.norm(np.cross(a-centre, b-centre)) > 0:
                     blade_triangles.append([centre, b, a])
     if not math.isfinite(volume) or volume <= 0:
         raise ValueError('Imported boundary has nonpositive enclosed fluid volume')
@@ -373,6 +407,9 @@ def prepare_converted_mesh(case):
         acoustic_sphere_radius_m=radius if record['acoustic_surface']=='permeable' else None,
         settings=config_geometry, input_cells=ncells, rotor_cells=int(len(rotor)),
         reference_surface='Extracted from the imported mesh; no original STL required')
+    geometry['yplus_patch'] = 'propeller'
+    geometry['yplus_scope'] = 'Blade only; hub excluded' if separate_hub else 'Whole propeller, including hub if merged'
+    geometry['physical_propeller_patches'] = ['propeller', 'propeller_hub'] if separate_hub else ['propeller']
     if 'propeller_patch_merge' in record:
         geometry['propeller_patch_merge'] = record['propeller_patch_merge']
     write(case/'mesh/geometry.json', json.dumps(geometry,indent=2)+'\n')

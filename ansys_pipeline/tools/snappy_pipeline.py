@@ -160,6 +160,9 @@ def finish_rotor_mesh(container, case, allow_bad, callback=None, live=False):
         docker_run(container, case, command, log, callback, live)
     patches = patch_info(case)
     expected = {'inlet', 'outlet', 'walls', 'propeller', 'rotaryRegion', 'rotaryRegion_slave'}
+    import_record = Path(case)/'mesh/import.json'
+    if import_record.is_file() and 'propeller_hub' in json.loads(import_record.read_text())['config']['patches']:
+        expected.add('propeller_hub')
     if {name for name, data in patches.items() if data['nFaces']} != expected:
         raise ValueError(f'Unexpected rotor mesh patches: {patches}')
     if not re.search(r'\brotaryRegion\b', (case/'constant/polyMesh/cellZones').read_text()):
