@@ -6,6 +6,29 @@ from tools import ansys_mesh as am
 
 
 class SeparateHubTests(unittest.TestCase):
+    def test_legacy_saved_mapping_recognizes_exact_split_wall_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            c=Path(tmp);(c/'mesh').mkdir();(c/'constant/polyMesh').mkdir(parents=True)
+            original=dict(config=am.DEFAULTS,source_sha256='preserved')
+            (c/'mesh/import.json').write_text(json.dumps(original))
+            order=c/'simulation_order.json';order.write_text('requested legacy mapping remains unchanged')
+            (c/'constant/polyMesh/boundary').write_text('propeller_blade\n{type wall; nFaces 3905;}\npropeller_hub\n{type wall; nFaces 679;}\nwalls\n{type wall;}\noutlet\n{type patch;}\ninlet\n{type patch;}')
+            result=am.resolve_split_propeller_mapping(c)
+            self.assertEqual(result['config']['patches']['propeller'],'propeller_blade')
+            self.assertEqual(result['config']['patches']['propeller_hub'],'propeller_hub')
+            self.assertEqual(result['source_sha256'],'preserved')
+            self.assertEqual(order.read_text(),'requested legacy mapping remains unchanged')
+            self.assertEqual(am.DEFAULTS['patches']['propeller'],'propeller')
+            self.assertEqual(am.resolve_split_propeller_mapping(c),result)
+
+    def test_autodetection_does_not_override_custom_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            c=Path(tmp);(c/'mesh').mkdir();(c/'constant/polyMesh').mkdir(parents=True)
+            original=dict(config=dict(am.DEFAULTS,patches=dict(am.DEFAULTS['patches'],propeller='custom_wall')))
+            (c/'mesh/import.json').write_text(json.dumps(original))
+            (c/'constant/polyMesh/boundary').write_text('propeller_blade\n{type wall;}\npropeller_hub\n{type wall;}')
+            self.assertEqual(am.resolve_split_propeller_mapping(c),original)
+
     def test_explicit_mapping_preserves_hub_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             c=Path(tmp);source=c/'split.msh.h5';source.touch()

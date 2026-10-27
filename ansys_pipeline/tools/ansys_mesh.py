@@ -211,6 +211,34 @@ def cell_count(case):
     return largest+1
 
 
+def resolve_split_propeller_mapping(case):
+    """Recognize exact blade/hub names even in orders saved with the old defaults.
+
+    Preserve requested order fingerprints; record the effective import mapping
+    only in mesh/import.json. Unknown/custom wall names remain strict errors.
+    """
+    case = Path(case)
+    path = case/'mesh/import.json'
+    record = json.loads(path.read_text(encoding='utf-8'))
+    config = record['config']
+    mapping = config['patches']
+    patches = _zone_entries(case/'constant/polyMesh/boundary')
+    if (mapping.get('propeller') == 'propeller'
+            and mapping.get('propeller_hub', 'propeller_hub') == 'propeller_hub'
+            and 'propeller' not in patches
+            and {'propeller_blade', 'propeller_hub'} <= set(patches)):
+        for name in ('propeller_blade', 'propeller_hub'):
+            if not re.search(r'\btype\s+wall\s*;', patches[name]):
+                raise ValueError(f'Split propeller patch {name} must be a wall')
+        record['config'] = dict(config, patches=dict(mapping,
+            propeller='propeller_blade', propeller_hub='propeller_hub'))
+        record['patch_name_autodetection'] = dict(
+            blade='propeller_blade', hub='propeller_hub',
+            reason='Exact split-wall names present; legacy combined propeller absent')
+        path.write_text(json.dumps(record, indent=2)+'\n', encoding='utf-8')
+    return record
+
+
 def merge_propeller_tip_patches(case, run):
     """Group optional Fluent tip-sizing walls into the physical propeller wall.
 
@@ -220,7 +248,7 @@ def merge_propeller_tip_patches(case, run):
     from tools.snappy_pipeline import write, header
     case = Path(case)
     path = case/'mesh/import.json'
-    record = json.loads(path.read_text())
+    record = resolve_split_propeller_mapping(case)
     config = record['config']
     propeller = config['patches']['propeller']
     rotor = config['rotorCellZone']
@@ -307,7 +335,7 @@ def prepare_converted_mesh(case):
     import trimesh
     from tools.snappy_pipeline import write, header
     case = Path(case)
-    record = json.loads((case/'mesh/import.json').read_text())
+    record = resolve_split_propeller_mapping(case)
     config = record['config']
     mesh = case/'constant/polyMesh'
     for canonical, original in config['patches'].items():
@@ -343,7 +371,7 @@ def prepare_converted_mesh(case):
     if separate_hub:
         expected_patches.add('propeller_hub')
     if set(patches) != expected_patches:
-        raise ValueError(f'Expected only propeller/inlet/outlet/walls before baffles, got {list(patches)}')
+        raise ValueError(f'Expected physical patches {sorted(expected_patches)} before baffles, got {list(patches)}')
     def patch_range(name):
         body = patches[name]
         start = int(re.search(r'\bstartFace\s+(\d+)', body)[1])

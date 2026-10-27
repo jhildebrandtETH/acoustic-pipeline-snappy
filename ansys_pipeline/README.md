@@ -256,3 +256,4 @@ available as `yplus_stats.face_weighted.mean`.
 +geometry metadata and report. Layer generation remains part of the supplied
 +Fluent mesh; the importer does not add or remove layers.
 +
+The exact pair `propeller_blade` / `propeller_hub` is also recognized automatically when the old combined `propeller` wall is absent. This supports resuming orders saved with the legacy default mapping without changing MESH inputs or order fingerprints. The effective mapping is recorded in `mesh/import.json`. Explicit custom mappings remain strict.
