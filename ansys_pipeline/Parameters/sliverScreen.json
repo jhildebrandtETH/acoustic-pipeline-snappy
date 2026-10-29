@@ -1,0 +1,8 @@
+{
+  "mode": "warn",
+  "rpm": 4000,
+  "target_delta_t_s": 1e-05,
+  "max_co_proxy": 5,
+  "minimum_tangential_width_mm": 0.1,
+  "minimum_nonwall_directional_width_mm": 0.03
+}

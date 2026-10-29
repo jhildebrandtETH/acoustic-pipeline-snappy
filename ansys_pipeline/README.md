@@ -227,9 +227,15 @@ interpoliert die akustischen Drucksignale auf ein gleichmäßiges **65536-Hz**-R
 Details zu adaptiven Zeitschritten, Volumenfeldausgabe
 und bestehenden Fällen: [Acoustic sampling](Parameters/acoustic-sampling.md).
 
-## Temporäre Laufzeit-Workarounds
+## Solver defaults: native Snappy with totalPressure inlet
 
-Neue Fälle deaktivieren den eingebauten yPlus-Monitor und verwenden PCG/DIC für Druck und Druckkorrektur. Hintergrund, Grenzen und genaue Rücknahme: [Runtime crash workarounds](docs/runtime-crash-workarounds.md).
+New ANSYS cases use the native Snappy pressure solver (GAMG/DICGaussSeidel,
+maxIter 50), meshWave wall distance, and SST background/inlet omega=0.0495.
+The stable totalPressure pressure-inlet configuration is retained. Updated adaptive
+acoustic sampling and enabled yPlus/area-average reporting are retained as well.
+Create a new order to receive these defaults; existing case dictionaries and order
+snapshots are unchanged. Details: [Native Snappy defaults](docs/native-snappy-defaults.md).
+Historical workarounds: [Runtime crash workarounds](docs/runtime-crash-workarounds.md).
 
 ### Y-plus coverage in simulation reports
 
@@ -257,3 +263,8 @@ available as `yplus_stats.face_weighted.mean`.
 +Fluent mesh; the importer does not add or remove layers.
 +
 The exact pair `propeller_blade` / `propeller_hub` is also recognized automatically when the old combined `propeller` wall is absent. This supports resuming orders saved with the legacy default mapping without changing MESH inputs or order fingerprints. The effective mapping is recorded in `mesh/import.json`. Explicit custom mappings remain strict.
+
+
+## Standalone STEP trailing-edge trimming
+
+A reproducible blade-only blunt-cut utility is available separately from CFD execution: [Trailing-edge tool](geometry_tools/blunt_trailing_edge/README.md). It preserves retained CAD surfaces and protects the hub; settings, overlays and validation are exported with each run.

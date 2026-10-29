@@ -16,32 +16,14 @@ FoamFile
 
 solvers
 {
-    yPsi
-    {
-        solver          GAMG;
-        smoother        GaussSeidel;
-        tolerance       1e-6;
-        relTol          0;
-        maxIter         500;
-        cacheAgglomeration no;
-        nCellsInCoarsestLevel 10;
-        agglomerator    faceAreaPair;
-        mergeLevels     1;
-    }
-    yPsiFinal
-    {
-        $yPsi;
-        relTol          0;
-    }
-
-    // Temporary crash workaround: see docs/runtime-crash-workarounds.md.
     "pcorr.*"
     {
-        solver          PCG;
-        preconditioner  DIC;
+        solver          GAMG;
         tolerance       1e-2;
         relTol          0;
-        maxIter         1000;
+        smoother        DICGaussSeidel;
+        cacheAgglomeration no;
+        maxIter         50;
     }
 
     p

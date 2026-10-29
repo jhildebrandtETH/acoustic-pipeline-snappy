@@ -1,5 +1,15 @@
 # Temporary runtime crash workarounds
 
+> **Current defaults - 28 October 2026:** the native Snappy solver setup has been
+> restored in all nine supported ANSYS templates, with the stable totalPressure
+> inlet retained. Pressure uses GAMG/DICGaussSeidel (maxIter 50), wall distance uses
+> meshWave, and SST background/inlet omega is 0.0495. Enabled yPlus monitoring,
+> blade-area-weighted reporting and updated adaptive acoustic sampling are retained.
+> The sections below record historical workarounds; PCG/Poisson/omega=1000 and
+> disabled yPlus are no longer the normal defaults. See
+> [Native Snappy defaults](native-snappy-defaults.md). Existing cases and saved
+> orders were not rewritten.
+
 ## Y-plus restored — 26 October 2026
 
 The yPlus function is enabled again in all nine ANSYS templates at the user request. It calculates every timestep and writes its field at normal write times. A separate propellerYPlusMean surfaceFieldValue function records the propeller area-average every timestep, preserving its time history despite purgeWrite. This supersedes the disabled-yPlus workaround below. It does not prove the earlier wall-distance crash is fixed; the newly enabled diagnostic requires validation in subsequent runs. Existing cases and order snapshots are unchanged.

@@ -1,0 +1,23 @@
+{
+  "rotor_zone": "rotaryregion",
+  "rpm": 4000,
+  "target_delta_t_s": 1E-05,
+  "max_co_screen": 5,
+  "speed_margin": 1.2,
+  "minimum_tangent_floor_mm": 0.025,
+  "minimum_normal_floor_mm": 0.02,
+  "maximum_normal_target_mm": 0.06,
+  "max_node_motion_mm": 0.25,
+  "max_layer_distance_change_fraction": 0.1,
+  "max_passes": 20,
+  "max_attempts_per_pass": 60,
+  "max_cluster_cells": 3,
+  "max_function_evaluations": 100,
+  "max_walltime_seconds": 900,
+  "priority_cells": [
+    774970
+  ],
+  "seed_radius_min_mm": 5,
+  "retry_cluster_cells": 6,
+  "include_vertex_clusters": false
+}

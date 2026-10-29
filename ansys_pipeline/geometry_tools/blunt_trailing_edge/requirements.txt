@@ -1,0 +1,5 @@
+# Optional, standalone CAD tool dependencies; not imported by the CFD pipeline.
+cadquery-ocp==8.0.1.1.0
+vtk==9.6.2
+numpy>=2,<3
+matplotlib>=3.11,<4

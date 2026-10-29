@@ -40,7 +40,6 @@ divSchemes
 
 laplacianSchemes
 {
-    laplacian(yPsi)  Gauss linear limited corrected 0.33;
     default         Gauss linear limited corrected 0.33;
 }
 
@@ -56,7 +55,7 @@ snGradSchemes
 
 wallDist
 {
-    method Poisson;
+    method meshWave;
 }
 
 // ************************************************************************* //

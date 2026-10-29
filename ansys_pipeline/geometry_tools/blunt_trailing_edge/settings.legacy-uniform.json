@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "input_step": "C:/Users/jonas/Downloads/fused.step",
+  "output_directory": "../../output/geometry_preprocess/fused_cut020",
+  "setback_mm": 0.2,
+  "frame": {
+    "origin_mm": [
+      0,
+      0,
+      0
+    ],
+    "rotation_axis": [
+      0,
+      1,
+      0
+    ],
+    "positive_blade_axis": [
+      0,
+      0,
+      1
+    ],
+    "positive_blade_trailing_edge": "min_chord_coordinate"
+  },
+  "hub": {
+    "radius_mm": "auto"
+  },
+  "station_spacing_mm": 2.0,
+  "section_deflection_mm": 0.001,
+  "validation_tolerance_mm": 0.015,
+  "overlay_radius_fractions": [
+    0.3,
+    0.5,
+    0.7,
+    0.85,
+    0.95,
+    0.98
+  ],
+  "overwrite": false
+}

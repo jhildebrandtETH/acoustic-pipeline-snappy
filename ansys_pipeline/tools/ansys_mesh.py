@@ -471,6 +471,15 @@ def run_mesh(container, case, cores, allow_bad, callback=None, live=False):
     if digest(source) != record['source_sha256']:
         raise ValueError('Case input mesh checksum mismatch')
     if source.name.lower().endswith('.msh.h5'):
+        screen_file = case/'Parameters/sliverScreen.json'
+        if screen_file.is_file():
+            from tools.mesh_sliver_screen import check_native_mesh, case_settings
+            screen = check_native_mesh(source, case/'mesh/sliver-screen',
+                case_settings(case, json.loads(screen_file.read_text(encoding='utf-8'))),
+                scale=record['config']['scale'], rotor_zone=record['config']['rotorCellZone'])
+            record['sliver_screen'] = dict(status=screen['status'],
+                flagged_cells=screen['flagged_cells'], report='mesh/sliver-screen/report.json')
+            write(path, json.dumps(record, indent=2)+'\n')
         from tools.fluent_hdf5 import export_mesh
         destination = case/'mesh/input.msh'
         counts = export_mesh(source, destination)
