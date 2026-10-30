@@ -28,7 +28,7 @@ acousticSurfaceRefinementRegionMode inside;
 acousticSurfaceRefinementRegionLevel ((1E15 2));
 
 nSmoothPatch 3;
-tolerance 1.0;
+tolerance 2.0;
 nSolveIter 30;
 nRelaxIter 20;
 nFeatureSnapIter 10;
