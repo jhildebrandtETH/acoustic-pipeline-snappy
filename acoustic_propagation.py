@@ -2,6 +2,8 @@ import json
 import math
 import shutil
 
+from tools.acoustic_time import case_sample_interval, source_time_statistics, uniform_result
+
 from tools.acoustic_comparison import cache_result, comparison_or_status, load_config, resolve_observer_position
 from tools.acoustic_directivity import settings as directivity_settings, frame, resolve_observers, cache_observers
 
@@ -27,6 +29,8 @@ def run_acoustic_solver(
 ):
     comparison_status = SIMULATION_WORKING_DIRECTORY / "report/acoustic-comparison.json"
     comparison_status.parent.mkdir(parents=True, exist_ok=True)
+    (comparison_status.parent / "acoustic-resampling.json").write_text(json.dumps(
+        {"status": "unavailable", "detail": "No uniform pressure grid from the current acoustic run yet."}))
     (comparison_status.parent / "acoustic-pressure.npz").unlink(missing_ok=True)
     (comparison_status.parent / "acoustic-observers.npz").unlink(missing_ok=True)
     (comparison_status.parent / "acoustic-directivity.json").write_text(json.dumps(
@@ -109,6 +113,21 @@ def run_acoustic_solver(
         emit_status(STATUS_CALLBACK, stage="acoustics", detail=detail, progress=100.0)
         return None
 
+    sample_interval = case_sample_interval(SIMULATION_WORKING_DIRECTORY)
+    resampling_path = SIMULATION_WORKING_DIRECTORY / "report/acoustic-resampling.json"
+    try:
+        source_stats = source_time_statistics(sample_times, sample_interval)
+    except ValueError as exc:
+        failed = {"status": "invalid_sampling", "detail": str(exc)}
+        resampling_path.write_text(json.dumps(failed, indent=2))
+        status_path.write_text(json.dumps(failed, indent=2))
+        raise
+    resampling = dict(status="source_validated", method="linear", target_interval_s=sample_interval,
+                      target_sampling_frequency_hz=1 / sample_interval,
+                      source_time_handling="FW-H uses actual adaptive timestamps",
+                      **source_stats)
+    resampling_path.write_text(json.dumps(resampling, indent=2))
+
     create_reference_geometry_vtk_series(
         surface_directory,
         acoustic_surface_directory,
@@ -154,6 +173,9 @@ def run_acoustic_solver(
         progress=55.0,
     )
     result = solver.predict(observer_m)
+    result = uniform_result(result, sample_interval)
+    resampling.update(status="complete", observer_uniform_samples=len(result.observer_times_s))
+    resampling_path.write_text(json.dumps(resampling, indent=2))
     multi_result = result if multiple else None
     if multiple:
         result = multi_result.for_observer(channels.index(str(comparison_config['microphone_channel'])))
@@ -173,9 +195,9 @@ def run_acoustic_solver(
     try:
         if multiple:
             cache_observers(multi_result, SIMULATION_WORKING_DIRECTORY, RPM, comparison_config,
-                            channels, raw_positions, rotations=ACOUSTIC_ANALYSIS_ROTATIONS)
+                            channels, raw_positions, rotations=ACOUSTIC_ANALYSIS_ROTATIONS, sample_interval_s=sample_interval)
         else:
-            cache_result(result, SIMULATION_WORKING_DIRECTORY, RPM, rotations=ACOUSTIC_ANALYSIS_ROTATIONS)
+            cache_result(result, SIMULATION_WORKING_DIRECTORY, RPM, rotations=ACOUSTIC_ANALYSIS_ROTATIONS, sample_interval_s=sample_interval)
         comparison = comparison_or_status(SIMULATION_WORKING_DIRECTORY, comparison_config)
         if comparison['status'] != 'complete':
             from tools.acoustic_tonal import write_cached_simulation_tonal

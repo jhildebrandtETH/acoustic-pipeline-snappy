@@ -1,6 +1,7 @@
 """Resolve actual case dictionaries to verify physical-time acoustic sampling."""
 from pathlib import Path
 import shutil
+import json
 import tempfile
 import unittest
 
@@ -25,21 +26,19 @@ class AcousticSamplingTests(unittest.TestCase):
                     warnings = []
                     control = resolve_dictionary(read_dictionary(case / 'system/controlDict', case, {}, warnings))
                     self.assertFalse(warnings)
-                    # Foundation 13 only aligns function-object writes when the main
-                    # Time controller also uses adjustableRunTime.
-                    self.assertEqual(control['writeControl'], 'adjustableRunTime')
+                    self.assertEqual(control['writeControl'], 'runTime')
                     self.assertEqual(float(control['writeInterval']), 10 * SAMPLE_INTERVAL)
                     self.assertEqual(control['adjustTimeStep'], 'yes')
                     self.assertEqual(float(control['deltaT']), 1.2e-8)
-                    self.assertEqual(float(control['maxDeltaT']), 1e-5)
+                    self.assertEqual(float(control['maxDeltaT']), SAMPLE_INTERVAL)
                     self.assertEqual(float(control['maxCo']), 5)
                     self.assertEqual(float(control['deltaTFactor']), 1.5)
                     self.assertEqual(float(control['functions']['startupDeltaTCap']['maxCo']), 5)
                     self.assertGreaterEqual(int(control['timePrecision']), 16)
                     for name in ('writePatchFields', 'writePermeableSurfaceFields'):
                         writer = control['functions'][name]
-                        self.assertEqual(writer['writeControl'], 'adjustableRunTime')
-                        self.assertEqual(float(writer['writeInterval']), SAMPLE_INTERVAL)
+                        self.assertEqual(writer['writeControl'], 'timeStep')
+                        self.assertEqual(int(writer['writeInterval']), 1)
                         self.assertEqual(writer['fields'], '(p U)')
                         self.assertEqual(writer['enabled'], 'no')
 
@@ -58,31 +57,27 @@ class AcousticSamplingTests(unittest.TestCase):
             self.assertIn('1.52587890625e-4', sections)
             self.assertIn('deltaTFactor', sections)
 
-    def test_growth_escapes_five_step_alignment_plateau(self):
-        # Reproduce Foundation 13 foamRun growth + Time::adjustDeltaT rounding.
-        # This checks the controller, not CFD stability or temporal accuracy.
-        def intervals(factor, cap=1e-5):
-            dt = SAMPLE_INTERVAL / 5
-            cycles = []
-            for _ in range(6):
-                remaining = SAMPLE_INTERVAL
-                steps = []
-                while remaining > 1e-15:
-                    proposed = min(factor * dt, cap)
-                    count = int(remaining / proposed + 0.99)
-                    dt = remaining / count if count > 0 else proposed
-                    steps.append(dt)
-                    remaining -= dt
-                self.assertAlmostEqual(sum(steps), SAMPLE_INTERVAL, places=15)
-                self.assertLessEqual(max(steps), cap * 1.01)
-                cycles.append(steps)
-            return cycles
+    def test_max_delta_tracks_case_sampling_interval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / 'system').mkdir()
+            shutil.copytree(ROOT / 'Parameters', case / 'Parameters')
+            control = case / 'Parameters/controlDict.cpp'
+            control.write_text(control.read_text().replace('1.52587890625e-5', '2.0833333333333333e-5'))
+            shutil.copyfile(ROOT / 'CoreTemplates/AMI/kOmegaSST/wall-functions/system/controlDict', case / 'system/controlDict')
+            actual = resolve_dictionary(read_dictionary(case / 'system/controlDict', case, {}, []))
+            self.assertAlmostEqual(float(actual['maxDeltaT']), 1 / 48000)
+            self.assertEqual(actual['functions']['writePatchFields']['writeInterval'], '1')
 
-        configured = resolve_dictionary(read_dictionary(
-            ROOT / 'Parameters/controlDict.cpp', ROOT, {}, []))
-        factor = float(configured['deltaTFactor'])
-        self.assertEqual(len(intervals(1.2)[-1]), 5)
-        self.assertEqual(len(intervals(factor)[-1]), 2)
-        self.assertAlmostEqual(intervals(factor)[-1][0], SAMPLE_INTERVAL / 2, places=15)
-        # A tighter flow-derived timestep limit must still take precedence.
-        self.assertGreaterEqual(len(intervals(factor, SAMPLE_INTERVAL / 8)[-1]), 8)
+    def test_uniform_grid_metadata_is_included_in_settings_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            (case / 'report').mkdir()
+            (case / 'report/acoustic-resampling.json').write_text(json.dumps({
+                'status': 'complete', 'target_sampling_frequency_hz': 65536,
+                'method': 'linear', 'observer_uniform_samples': 1000}))
+            result = create_settings_report_data(case, 4000, 'AMI', 'kOmegaSST')
+            sections = str(result['sections'])
+            self.assertIn('Acoustic time-grid interpolation', sections)
+            self.assertIn('65536', sections)
+            self.assertIn('linear', sections)

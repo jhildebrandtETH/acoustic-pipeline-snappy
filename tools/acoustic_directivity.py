@@ -76,7 +76,7 @@ def resolve_observers(case, rpm, config):
     return ids, raw, mapped
 
 
-def cache_observers(result, case, rpm, config, channels, raw_positions, rotations):
+def cache_observers(result, case, rpm, config, channels, raw_positions, rotations, *, sample_interval_s=None):
     """Use one fully arrived time window for all microphones and the legacy plot."""
     from tools.acoustic_comparison import case_geometry
     times = result.observer_times_s.detach().cpu().numpy().astype(float)
@@ -93,12 +93,12 @@ def cache_observers(result, case, rpm, config, channels, raw_positions, rotation
     retained = times[mask]
     if len(retained) < 8:
         raise ValueError('Too few fully arrived samples common to every observer')
-    step = np.median(np.diff(retained))
-    if np.max(np.diff(retained)) > 1.5 * step:
-        raise ValueError('Observer trace has sampling gaps')
-    grid = np.arange(retained[0], retained[-1], step)
-    values = np.array([np.interp(grid, retained, row[mask]) for row in pressure])
-    payload = dict(pressure_pa=values, sampling_frequency_hz=1 / step, rpm=rpm,
+    from tools.acoustic_time import uniform_pressure
+    grid, values, step = uniform_pressure(retained, pressure[:, mask], sample_interval_s)
+    if len(grid) < 8:
+        raise ValueError('Too few fully arrived uniform acoustic samples')
+    payload = dict(pressure_pa=values, sampling_frequency_hz=1 / step, time_s=grid,
+                   interpolation_method='linear', rpm=rpm,
                    geometry=case_geometry(case), channel_ids=np.array(channels), observer_m=positions,
                    experimental_positions_m=raw_positions, requested_duration_s=rotations * 60 / rpm,
                    coordinate_frame=json.dumps([part.tolist() for part in frame(config)]),
@@ -124,6 +124,9 @@ def select_cached_observer(case, config):
     index = payload['channel_ids'].tolist().index(str(config['microphone_channel']))
     single = {k: payload[k] for k in ('sampling_frequency_hz', 'rpm', 'geometry', 'requested_duration_s', 'requested_rotations')}
     single.update(pressure_pa=payload['pressure_pa'][index], observer_m=payload['observer_m'][index])
+    for key in ('time_s', 'interpolation_method'):
+        if key in payload:
+            single[key] = payload[key]
     np.savez_compressed(Path(case) / 'report/acoustic-pressure.npz', **single)
 
 

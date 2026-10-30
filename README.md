@@ -372,8 +372,11 @@ Acoustic report spectra mark BPF and its harmonics using `blade_count` in `Param
 
 Flow-field slice and blade-section images use ParaView Cell to Point Data interpolation for smooth colors. Interpolation is applied only for rendering and can reduce local extrema; saved simulation fields are unchanged. Courant-number maps and blade-wall diagnostics retain native cell values.
 
-Acoustic surface pressure and velocity are saved at **65536 Hz** using physical-time
-output in both pipeline versions. See [acoustic sampling](Parameters/acoustic-sampling.md)
+Acoustic surface pressure and velocity are saved at **every adaptive solver step**.
+The timestep is Courant-controlled and capped at **1/65536 s** (15.2587890625 µs),
+with the existing startup ramp. Output scheduling does not align or shorten steps.
+FW-H uses the actual source timestamps; observer pressure is then interpolated
+onto the uniform **65536 Hz** analysis grid, as in the ANSYS branch. See [acoustic sampling](Parameters/acoustic-sampling.md)
 for adaptive timesteps, separate full-field output, and existing-case migration.
 
 ### Y-plus coverage in simulation reports

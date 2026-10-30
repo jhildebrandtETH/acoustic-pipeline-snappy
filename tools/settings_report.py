@@ -204,9 +204,13 @@ def create_settings_report_data(case_path, rpm, mode, turbulence_model, mesh_onl
     section('Time stepping and output', 'system/controlDict (local includes resolved where supported)', [
         ('Time controls', {k: control[k] for k in ('application', 'startFrom', 'startTime', 'stopAt', 'endTime', 'deltaT', 'adjustTimeStep', 'deltaTFactor', 'maxCo', 'maxDeltaT') if k in control}),
         ('Output', {k: control[k] for k in ('writeControl', 'writeInterval', 'purgeWrite', 'writeFormat', 'writePrecision', 'timePrecision') if k in control}),
+        ('Uniform acoustic grid interval (s)', control.get('acousticWriteInterval')),
         ('Impermeable acoustic sampling', functions.get('writePatchFields') if isinstance(functions, dict) else None),
         ('Permeable acoustic sampling', functions.get('writePermeableSurfaceFields') if isinstance(functions, dict) else None),
         ('Startup time-step cap', functions.get('startupDeltaTCap') if isinstance(functions, dict) else None)])
+    resampling = read('report/acoustic-resampling.json')
+    if resampling:
+        section('Acoustic time-grid interpolation', 'report/acoustic-resampling.json', list(resampling.items()))
     solution = read('system/fvSolution')
     section('Solver coupling and convergence', 'system/fvSolution', [
         (key, solution.get(key)) for key in ('PIMPLE', 'SIMPLE', 'solvers', 'relaxationFactors')
