@@ -390,3 +390,10 @@ including moved points. Unavailable areas are reported explicitly; face statisti
 silently substitute for area statistics. The legacy `average_yplus` report-summary field
 now contains the area-weighted mean (or null when unavailable); the old face mean is
 available as `yplus_stats.face_weighted.mean`.
+
+
+## Acoustic sphere studies
+
+Record multiple sphere diameters in one CFD run, or resample saved volume fields:
+see [the sphere study guide](Parameters/acoustic-sphere-study.md).
+This feature is in the root snappy pipeline; the ANSYS import pipeline is unchanged.

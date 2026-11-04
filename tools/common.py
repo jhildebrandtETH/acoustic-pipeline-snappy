@@ -73,6 +73,24 @@ def _case_path_state(path: Path) -> str:
 
 def validate_acoustic_arguments(parser, args):
     """Validate coupled acoustic CLI arguments and apply safe defaults."""
+    from tools.acoustic_study import diameter_factors
+    plural = getattr(args, 'acoustic_sphere_diameters', None)
+    sweep = getattr(args, 'acoustic_sphere_range', None)
+    if sum(x is not None for x in (plural, sweep, args.acoustic_sphere_diameter)) > 1:
+        parser.error('Choose one of --acoustic-sphere-diameter, --acoustic-sphere-diameters or --acoustic-sphere-range')
+    if plural is not None or sweep is not None:
+        if args.acoustic_surface != 'permeable' or getattr(args, 'aerodynamics_only', False):
+            parser.error('Multiple spheres require --acoustic-surface permeable')
+        try:
+            args.acoustic_sphere_diameters = diameter_factors(plural, sweep)
+        except ValueError as exc:
+            parser.error(str(exc))
+        args.acoustic_sphere_diameter = max(args.acoustic_sphere_diameters)
+    elif args.acoustic_sphere_diameter is not None:
+        try:
+            diameter_factors([args.acoustic_sphere_diameter])
+        except ValueError as exc:
+            parser.error(str(exc))
     if getattr(args, "aerodynamics_only", False):
         if args.acoustic_surface is not None or args.acoustic_sphere_diameter is not None:
             parser.error("--aerodynamics-only cannot be combined with acoustic surface options")

@@ -142,6 +142,7 @@ def preprocessing(
         ACOUSTIC_SURFACE,
         ACOUSTIC_SPHERE_DIAMETER,
         study=study,
+        acoustic_diameters=order.get('acoustic_sphere_diameters'),
     )
     emit_status(
         STATUS_CALLBACK,

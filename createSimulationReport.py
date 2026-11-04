@@ -229,6 +229,11 @@ def create_simulation_report(
 
     c.setFont("Helvetica-Bold", 18)
     c.drawString(50, y, "CFD Simulation Report")
+    sphere_metadata = report_dir / 'acoustic-sphere.json'
+    if sphere_metadata.is_file():
+        sphere = json.loads(sphere_metadata.read_text())
+        c.setFont('Helvetica', 10)
+        c.drawString(50, y - 16, f"Acoustic sphere: {sphere['factor']:g} x propeller diameter; radius {sphere['radius_m']:.6g} m ({sphere['source']})")
 
     y -= 35
     c.setFont("Helvetica", 10)

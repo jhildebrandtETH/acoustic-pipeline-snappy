@@ -117,6 +117,7 @@ def prepare_simulation_order(args, parser):
         args.end_on_value = order.get("end_on_value")
         args.acoustic_surface = order.get("acoustic_surface")
         args.acoustic_sphere_diameter = order.get("acoustic_sphere_diameter")
+        args.acoustic_sphere_diameters = order.get('acoustic_sphere_diameters')
 
         missing_source_meshes = [
             mesh for mesh in args.meshes if mesh not in source_meshes

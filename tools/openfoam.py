@@ -1019,6 +1019,7 @@ def create_simulation_order(args, simulations_directory: Path):
         "meshing_backend": "snappy-native-v1",
         "acoustic_surface": args.acoustic_surface,
         "acoustic_sphere_diameter": args.acoustic_sphere_diameter,
+        "acoustic_sphere_diameters": getattr(args, 'acoustic_sphere_diameters', None),
         "mode": args.mode,
         "turbulence": args.turbulence,
         "meshes": args.meshes,

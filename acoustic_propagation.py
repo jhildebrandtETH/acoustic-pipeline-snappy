@@ -26,6 +26,9 @@ def run_acoustic_solver(
     SIMULATION_WORKING_DIRECTORY,
     RPM,
     STATUS_CALLBACK=None,
+    SURFACE_SERIES=None,
+    RESPONSE_DELAY_S=1.0e-5,
+    SAMPLE_INTERVAL_S=None,
 ):
     comparison_status = SIMULATION_WORKING_DIRECTORY / "report/acoustic-comparison.json"
     comparison_status.parent.mkdir(parents=True, exist_ok=True)
@@ -47,6 +50,12 @@ def run_acoustic_solver(
         comparison_status.write_text(json.dumps({"status": "unavailable", "detail": str(exc)}, indent=2))
         raise
     print(f"Acoustic observers ({len(channels) if multiple else 1}); spectrum channel {comparison_config.get('microphone_channel')}: {observer_coordinates} m", flush=True)
+    sphere_metadata = SIMULATION_WORKING_DIRECTORY / 'report/acoustic-sphere.json'
+    if sphere_metadata.is_file():
+        radius = float(json.loads(sphere_metadata.read_text())['radius_m'])
+        distances = torch.linalg.vector_norm(torch.as_tensor(observer_coordinates, dtype=torch.float64), dim=-1)
+        if bool(torch.any(distances <= radius)):
+            raise ValueError(f'All acoustic observers must be outside the selected sphere (radius {radius:g} m)')
     emit_status(
         STATUS_CALLBACK,
         stage="acoustics",
@@ -78,6 +87,10 @@ def run_acoustic_solver(
         )
         surface_file = "permeableSurface.vtk"
         permeable = True
+
+    if SURFACE_SERIES is not None:
+        surface_directory = SURFACE_SERIES.input_dir
+        surface_file = SURFACE_SERIES.surface_file
 
     sample_times = sorted(
         float(directory.name)
@@ -113,7 +126,7 @@ def run_acoustic_solver(
         emit_status(STATUS_CALLBACK, stage="acoustics", detail=detail, progress=100.0)
         return None
 
-    sample_interval = case_sample_interval(SIMULATION_WORKING_DIRECTORY)
+    sample_interval = SAMPLE_INTERVAL_S or case_sample_interval(SIMULATION_WORKING_DIRECTORY)
     resampling_path = SIMULATION_WORKING_DIRECTORY / "report/acoustic-resampling.json"
     try:
         source_stats = source_time_statistics(sample_times, sample_interval)
@@ -128,11 +141,14 @@ def run_acoustic_solver(
                       **source_stats)
     resampling_path.write_text(json.dumps(resampling, indent=2))
 
-    create_reference_geometry_vtk_series(
-        surface_directory,
-        acoustic_surface_directory,
-        surface_file=surface_file,
-    )
+    if SURFACE_SERIES is None and permeable and sphere_metadata.is_file():
+        # Recorded study spheres are fixed: reuse their VTK history directly,
+        # avoiding another full ASCII copy for each diameter.
+        acoustic_surface_directory = surface_directory
+    elif SURFACE_SERIES is None:
+        create_reference_geometry_vtk_series(
+            surface_directory, acoustic_surface_directory, surface_file=surface_file,
+        )
 
     rpm = RPM
     omega_rad_s = rpm * 2.0 * math.pi / 60.0
@@ -151,9 +167,7 @@ def run_acoustic_solver(
         else "writePatchFields_referenceGeometry"
     )
 
-    solver = F1ASolver.from_openfoam_vtk(
-        acoustic_surface_directory,
-        surface_file=surface_file,
+    solver_options = dict(
         rpm=rpm,
         permeable=permeable,
         # The sampled permeable sphere is fixed in the inertial frame.
@@ -161,8 +175,16 @@ def run_acoustic_solver(
         rotation_center_m=frame(comparison_config)[1].tolist() if multiple else [0.0, 0.0, 0.0],
         omega_rad_s=[0.0, omega_rad_s if not permeable else 0.0, 0.0],
         device=device,
-        cache_dir=SIMULATION_WORKING_DIRECTORY / ".cache" / cache_name,
+        response_delay_s=RESPONSE_DELAY_S,
     )
+    if SURFACE_SERIES is None:
+        solver = F1ASolver.from_openfoam_vtk(
+            acoustic_surface_directory, surface_file=surface_file,
+            cache_dir=SIMULATION_WORKING_DIRECTORY / '.cache' / cache_name,
+            **solver_options,
+        )
+    else:
+        solver = F1ASolver(SURFACE_SERIES, **solver_options)
 
     observer_m = torch.tensor(observer_coordinates, device=device)
 

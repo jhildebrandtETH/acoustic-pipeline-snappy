@@ -93,6 +93,11 @@ def postprocessing(
             status_callback=STATUS_CALLBACK,
         )
 
+    if not AERODYNAMICS_ONLY and (SIMULATION_WORKING_DIRECTORY / 'acoustic-surfaces.json').is_file():
+        from tools.acoustic_study import run_study
+        run_study(SIMULATION_WORKING_DIRECTORY, RPM_COUNT, MODE, TURBULENCE_MODEL,
+                  status_callback=STATUS_CALLBACK)
+
     emit_status(
         STATUS_CALLBACK,
         stage="postprocessing",

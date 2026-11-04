@@ -91,7 +91,7 @@ def configure_order(store, args):
         # Store only execution options, with all scientific options already restored.
         options = {key: getattr(args, key, None) for key in (
             'field_init', 'turbulence', 'wall_functions', 'aerodynamics_only',
-            'acoustic_surface', 'acoustic_sphere_diameter', 'end_on', 'end_on_value',
+            'acoustic_surface', 'acoustic_sphere_diameter', 'acoustic_sphere_diameters', 'end_on', 'end_on_value',
             'mesh_only', 'allow_bad_mesh')}
         options['live_output'] = True
         store.persist_batch_fields(slurm=config, slurm_worker_options=options)

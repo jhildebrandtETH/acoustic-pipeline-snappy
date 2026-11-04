@@ -209,6 +209,9 @@ def create_settings_report_data(case_path, rpm, mode, turbulence_model, mesh_onl
         ('Permeable acoustic sampling', functions.get('writePermeableSurfaceFields') if isinstance(functions, dict) else None),
         ('Startup time-step cap', functions.get('startupDeltaTCap') if isinstance(functions, dict) else None)])
     resampling = read('report/acoustic-resampling.json')
+    sphere = read('report/acoustic-sphere.json')
+    if sphere:
+        section('Selected acoustic study sphere', 'report/acoustic-sphere.json', list(sphere.items()))
     if resampling:
         section('Acoustic time-grid interpolation', 'report/acoustic-resampling.json', list(resampling.items()))
     solution = read('system/fvSolution')

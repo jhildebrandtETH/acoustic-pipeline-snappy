@@ -85,7 +85,7 @@ def configured_layers(case):
     return value in ('true', 'yes', 'on', '1')
 
 
-def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=None):
+def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=None, acoustic_diameters=None):
     import numpy as np
     import trimesh
     from tools.geometry import read_stl
@@ -132,6 +132,16 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
     sphere_radius = .5 * multiplier * diameter
     if sphere_radius <= np.linalg.norm(vertices, axis=1).max():
         raise ValueError('Acoustic/refinement sphere must enclose the complete propeller')
+    if acoustic_diameters:
+        if acoustic_surface != 'permeable':
+            raise ValueError('Multiple spheres require permeable acoustics')
+        from tools.acoustic_study import diameter_factors
+        acoustic_diameters = diameter_factors(acoustic_diameters)
+        if max(acoustic_diameters) != multiplier:
+            raise ValueError('Shared mesh must use the largest acoustic sphere factor')
+        for factor in acoustic_diameters:
+            if .5 * factor * diameter <= np.linalg.norm(vertices, axis=1).max():
+                raise ValueError(f'Acoustic sphere {factor:g}D must enclose the complete propeller')
     lateral = sphere_radius * (1 + config['lateralMargin'])
     inlet = sphere_radius * (1 + config['inletMargin'])
     outlet = inlet * (1-config['inletFraction'])/config['inletFraction']
@@ -153,6 +163,9 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
         cylinder.export(surface/(name+'.stl'))
     # This is always a refinement surface; sampling is independently enabled.
     trimesh.creation.icosphere(subdivisions=4, radius=sphere_radius).export(surface/'permeableSurface.stl')
+    if acoustic_diameters:
+        from tools.acoustic_study import configure_recording
+        configure_recording(case, acoustic_diameters, diameter)
     x0,y0,z0 = lower
     x1,y1,z1 = upper
     corners = [(x0,y0,z0),(x1,y0,z0),(x1,y1,z0),(x0,y1,z0),

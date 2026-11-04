@@ -118,5 +118,9 @@ def create_parser():
         type=float,
         help="Permeable sphere diameter as a multiple of propeller diameter.",
     )
+    parser.add_argument('--acoustic-sphere-diameters', nargs='+', type=float,
+                        help='Record several sphere diameter factors in one CFD run.')
+    parser.add_argument('--acoustic-sphere-range', nargs=3, metavar=('START', 'STOP', 'STEP'),
+                        help='Inclusive diameter-factor range, e.g. 2.5 1.1 -0.1.')
 
     return parser
