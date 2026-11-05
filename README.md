@@ -397,3 +397,8 @@ available as `yplus_stats.face_weighted.mean`.
 Record multiple sphere diameters in one CFD run, or resample saved volume fields:
 see [the sphere study guide](Parameters/acoustic-sphere-study.md).
 This feature is in the root snappy pipeline; the ANSYS import pipeline is unchanged.
+
+
+## Case monitor: local and Slurm
+
+Use python main.py --sim-dir /path/to/order --watch (or --status) for either execution mode, without a Slurm config. See [case monitor details](Parameters/case-monitor.md).

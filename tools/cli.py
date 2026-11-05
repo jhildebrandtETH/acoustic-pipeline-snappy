@@ -87,8 +87,8 @@ def create_parser():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument('--slurm', action='store_true', help='Coordinate separate Docker OpenFOAM Slurm case jobs.')
     parser.add_argument('--slurm-config', type=Path, help='Cluster JSON settings; saved with the order for resume.')
-    parser.add_argument('--status', action='store_true', help='Print the saved case table without launching jobs.')
-    parser.add_argument('--watch', action='store_true', help='Continuously watch the saved case table (implies --status).')
+    parser.add_argument('--status', action='store_true', help='Print the saved local or Slurm case table without launching jobs.')
+    parser.add_argument('--watch', action='store_true', help='Continuously watch local or Slurm case progress (implies --status).')
     parser.add_argument(
         "--mesh-only",
         action="store_true",

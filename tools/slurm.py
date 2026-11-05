@@ -177,6 +177,10 @@ class WorkerRegistry(RuntimeStatusRegistry):
 
 def refresh_saved_table(store, registry):
     order = store.snapshot()
+    if not order.get('slurm') and not any(c.get('slurm_job') for c in order['cases']):
+        from tools.case_monitor import refresh_local_table
+        refresh_local_table(store, registry, order)
+        return
     active = {c['folder'] for c in order['cases'] if c.get('slurm_job') and
               not c['slurm_job'].get('terminal')}
     refresh_dependency_runtime_states(order, registry, active)
@@ -312,24 +316,9 @@ def run_slurm_scheduler(pipeline_main_directory, simulations_directory, order_st
 
 
 def show_status(root, watch=False):
-    store = SimulationOrderStore(Path(root).resolve())
-    order = store.snapshot()
-    registry = RuntimeStatusRegistry(order['cases'])
-    initialize_runtime_queue_states(order, registry)
-    dashboard = LiveBatchDashboard(registry, order['total_cores'], order['cores_per_case'])
-    refresh_saved_table(store, registry)
-    if not watch:
-        print(dashboard.render_text())
-        return
-    dashboard.start()
-    try:
-        while True:
-            refresh_saved_table(store, registry)
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        dashboard.stop()
+    # Retain the old import for callers while the CLI uses a neutral entry point.
+    from tools.case_monitor import show_status as monitor
+    return monitor(root, watch=watch)
 
 
 def run_worker(root, folder, token):

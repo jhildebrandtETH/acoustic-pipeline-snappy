@@ -86,11 +86,13 @@ class SimulationOrderStore:
 
 
 class RuntimeStatusRegistry:
-    """In-memory, thread-safe runtime state used by the live batch dashboard."""
+    """Thread-safe dashboard state, optionally published for local observers."""
 
     def __init__(self, cases: list[dict]):
         self._lock = threading.RLock()
         self._states = {}
+        self._runtime_path = None
+        self._last_runtime_write = 0.0
 
         for case in cases:
             folder = case["folder"]
@@ -119,6 +121,9 @@ class RuntimeStatusRegistry:
 
     def update(self, folder_name: str, **updates) -> None:
         with self._lock:
+            previous = self._states.get(folder_name, {})
+            transition = any(key in updates and updates[key] != previous.get(key)
+                             for key in ('state', 'stage'))
             if folder_name not in self._states:
                 self._states[folder_name] = {
                     "folder": folder_name,
@@ -136,6 +141,34 @@ class RuntimeStatusRegistry:
 
             self._states[folder_name].update(updates)
             self._states[folder_name]["updated_at"] = time.time()
+            self.publish_runtime(force=transition)
+
+    def persist_runtime(self, root):
+        """Only the local launcher writes this snapshot; watchers never do."""
+        with self._lock:
+            self._runtime_path = Path(root) / '.runtime/local-status.json'
+            self._runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            self._runtime_active = True
+            self.publish_runtime(force=True)
+
+    def publish_runtime(self, *, force=False):
+        with self._lock:
+            if self._runtime_path is None:
+                return
+            now = time.monotonic()
+            if not force and now - self._last_runtime_write < 1.0:
+                return
+            _atomic_write_json(self._runtime_path, {
+                'active': self._runtime_active, 'updated_at': time.time(),
+                'cases': self.snapshot(),
+            })
+            self._last_runtime_write = now
+
+    def close_runtime(self):
+        with self._lock:
+            if self._runtime_path is not None:
+                self._runtime_active = False
+                self.publish_runtime(force=True)
 
     def callback_for(self, folder_name: str):
         def callback(**fields):
@@ -1169,6 +1202,7 @@ def run_parallel_scheduler(
         thread_name_prefix="simulation-case",
     )
     running_futures = {}
+    registry.persist_runtime(simulations_directory)
     if not getattr(args, "live_output", False):
         dashboard.start()
 
@@ -1289,9 +1323,11 @@ def run_parallel_scheduler(
                         "are runnable. Check depends_on entries in simulation_order.json."
                     )
 
+            registry.publish_runtime()
             time.sleep(scheduler_poll_interval)
 
     finally:
         executor.shutdown(wait=True, cancel_futures=False)
+        registry.close_runtime()
         if not getattr(args, "live_output", False):
             dashboard.stop(final_render=True)

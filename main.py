@@ -23,7 +23,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.status or args.watch:
-        from tools.slurm import show_status
+        from tools.case_monitor import show_status
         show_status(args.sim_dir, watch=args.watch)
         return
     if args.slurm and (args.mesh_case or args.mesh_native):
