@@ -224,7 +224,7 @@ def format_optional_bool(value):
     return "Not found"
 
 
-def evaluate_thrust_convergence(times, thrusts, rev_time, threshold=1e-3):
+def evaluate_thrust_convergence(times, thrusts, rev_time, threshold=0.005):
     latest_time = float(times[-1])
     last_rev_start = latest_time - rev_time
     idx_start = np.searchsorted(times, last_rev_start, side="left")
@@ -338,8 +338,28 @@ def compute_thrust_stability_history(times, thrusts, rev_time):
     }
 
 
+def clip_load_axis(ax, values, reference):
+    """Limit the display when a transient would obscure the load history."""
+    if not len(reference):
+        return None
+    if len(reference) >= 20:
+        lo, hi = np.percentile(reference, [1, 99])
+    else:
+        lo, hi = reference.min(), reference.max()
+    span = max(float(hi - lo), abs(float(lo)) * .002, 1e-9)
+    if np.ptp(values) <= 5 * span:
+        return None
+    limits = (lo - .15 * span, hi + .15 * span)
+    ax.set_ylim(*limits)
+    outside = int(np.sum((values < limits[0]) | (values > limits[1])))
+    ax.text(.98, .96, f"{outside} samples outside y-range", transform=ax.transAxes,
+            ha="right", va="top", fontsize=8,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": .9})
+    return limits
+
+
 def plot_load_history(times, values, rev_time, path, title, ylabel):
-    """Use all recorded samples and show the final window at native cadence."""
+    """Display the full time span and zoom into the final revolution."""
     end = float(times[-1])
     start = max(float(times[0]), end - rev_time)
     final = times >= start
@@ -349,21 +369,15 @@ def plot_load_history(times, values, rev_time, path, title, ylabel):
         history.plot(times, values, color=COLORS[0])
         history.axvspan(start, end, color=COLORS[0], alpha=.13, lw=0)
         history.set(xlabel="Physical time [s]", ylabel=ylabel, title="(a) Full history")
+        # Keep the startup samples in the series, but set display limits from
+        # later samples so a startup spike cannot flatten the rest of the run.
+        reference = values[times > float(times[0]) + .001]
+        clip_load_axis(history, values, reference if len(reference) else values[1:])
         phase = (times[final] - (end - rev_time)) * (360 / rev_time)
         window = values[final]
         detail.plot(phase, window, color=COLORS[0], marker="." if len(window) < 2 else None)
         mean = float(np.mean(window))
-        limits = None
-        if len(window) >= 20:
-            lo, hi = np.percentile(window, [1, 99])
-            central_span = max(float(hi - lo), abs(float(lo)) * .002, 1e-9)
-            if np.ptp(window) > 5 * central_span:
-                limits = (lo - .15 * central_span, hi + .15 * central_span)
-                detail.set_ylim(*limits)
-                outside = int(np.sum((window < limits[0]) | (window > limits[1])))
-                detail.text(.98, .96, f"{outside} samples outside view", transform=detail.transAxes,
-                            ha="right", va="top", fontsize=8,
-                            bbox={"facecolor": "white", "edgecolor": "none", "alpha": .9})
+        limits = clip_load_axis(detail, window, window) if len(window) >= 20 else None
         if limits is None or limits[0] <= mean <= limits[1]:
             detail.axhline(mean, color=COLORS[1], ls="--", lw=1, label="Sample mean")
             detail.legend(loc="best")
@@ -378,7 +392,8 @@ def plot_load_history(times, values, rev_time, path, title, ylabel):
         plt.close(fig)
 
 
-def create_force_plots(times, thrusts, report_dir, rev_time, thrust_convergence):
+def create_force_plots(times, thrusts, report_dir, rev_time, thrust_convergence=None):
+    """Plot thrust and variability; accept the legacy summary argument."""
     force_plot = report_dir / "force_plot.png"
     conv_plot = report_dir / "force_convergence.png"
     plot_load_history(times, thrusts, rev_time, force_plot, "Axial thrust", r"Thrust, $F_y$ [N]")
@@ -387,24 +402,17 @@ def create_force_plots(times, thrusts, report_dir, rev_time, thrust_convergence)
     metric_time = stability_history["time"]
     metric = stability_history["relative_std"]
     valid = np.isfinite(metric)
-    threshold = thrust_convergence["threshold"]
     fig, ax = plt.subplots(figsize=(9, 3.5), layout="constrained")
     try:
         if np.any(valid):
-            ax.plot(metric_time[valid], metric[valid], label="Sliding one-revolution window")
-        ax.axhline(threshold, color=COLORS[1], ls="--", label=f"Criterion ({threshold:g})")
+            ax.plot(metric_time[valid], metric[valid])
         ax.axvspan(max(float(times[0]), float(times[-1]) - rev_time), float(times[-1]), color=COLORS[0], alpha=.13, lw=0)
-        ax.set(xlabel="Physical time [s]", ylabel=r"$sigma_F / |overline{F}|$ [-]",
+        ax.set(xlabel="Physical time [s]", ylabel=r"$\sigma_F / |\overline{F}|$ [-]",
                title="Thrust variability over one revolution")
         if np.any(metric[valid] > 0):
             # The linear region keeps genuinely zero-variance windows visible.
-            ax.set_yscale("symlog", linthresh=threshold / 10)
-        final = thrust_convergence["relative_std"]
-        status = "Passed" if thrust_convergence["passed"] else "Failed"
-        if final is not None:
-            ax.set_title(f"Final window {final:.2e} | {status}", loc="right", fontsize=9)
+            ax.set_yscale("symlog", linthresh=1e-4)
         ax.grid(axis="y")
-        ax.legend(loc="best")
         save_figure(fig, conv_plot)
     finally:
         plt.close(fig)
@@ -538,7 +546,7 @@ def create_residual_plots(residual_file, report_dir, rev_time, latest_time):
         ax.set(yscale="log", xlabel="Physical time [s]", ylabel="Solver residual [-]",
                title="Residual histories")
         ax.grid(axis="y")
-        ax.legend(loc="best", ncol=3)
+        ax.legend(loc="upper center", bbox_to_anchor=(.5, -.20), ncol=3)
         save_figure(fig, residual_plot)
     finally:
         plt.close(fig)

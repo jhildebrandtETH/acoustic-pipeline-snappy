@@ -370,7 +370,7 @@ Future flow atlases include uncropped XY/YZ sections through the shaft, covering
 
 Acoustic report spectra mark BPF and its harmonics using `blade_count` in `Parameters/acousticComparison.json` (default 2 for older cases). Markers are expected frequencies, not detected peaks. Comparisons also show unweighted band-limited total SPL, FFT spacing and segment duration; the existing experimental repeat envelope is retained. FFT spacing is not the effective Hann/Welch spectral resolution.
 
-Flow-field slice and blade-section images use ParaView Cell to Point Data interpolation for smooth colors. Interpolation is applied only for rendering and can reduce local extrema; saved simulation fields are unchanged. Courant-number maps and blade-wall diagnostics retain native cell values.
+Field colors use ParaView Cell to Point Data interpolation for rendering, including wall-shear and Courant maps. Vector magnitudes are evaluated on cells before interpolation. Wall y+ retains native cell colors. Saved fields and cell-based diagnostics use the original values.
 
 Acoustic surface pressure and velocity are saved at **every adaptive solver step**.
 The timestep is Courant-controlled and capped at **1/65536 s** (15.2587890625 µs),

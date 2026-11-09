@@ -520,9 +520,49 @@ def _pvvis_limits(values, key, settings, symmetric=False):
     return [lo, hi]
 
 
-def _pvvis_render(source, result, settings, run_dir, view, title, caption,
+def _pvvis_render(source, result, settings, run_dir, view, title, caption, *, field=None, **kwargs):
+    """Apply display-only cell-to-point interpolation to field colors except y+."""
+    if not field or field[0] != "CELLS" or field[1] == "yPlus":
+        return _pvvis_render_frame(source, result, settings, run_dir, view, title, caption,
+                                   field=field, **kwargs)
+
+    _, name, label = field
+    time_s = kwargs.get("time_s")
+    source.UpdatePipeline(time_s) if time_s is not None else source.UpdatePipeline()
+    array = source.CellData.GetArray(name)
+    if array is None:
+        raise ValueError(f"Missing CELLS array {name} for {title}")
+
+    magnitude = None
+    smoothed = None
+    try:
+        display_name = name
+        if array.GetNumberOfComponents() > 1:
+            # Averaging vector components first can artificially cancel the
+            # stress magnitude on either side of a separation candidate.
+            display_name = f"{name}_display_magnitude"
+            magnitude = pvs.Calculator(Input=source)
+            magnitude.AttributeType = "Cell Data"
+            magnitude.ResultArrayName = display_name
+            magnitude.Function = f"mag({name})"
+        smoothed = pvs.CellDatatoPointData(Input=magnitude if magnitude is not None else source)
+        smoothed.ProcessAllArrays = 0
+        smoothed.CellDataArraytoprocess = [display_name]
+        return _pvvis_render_frame(
+            smoothed, result, settings, run_dir, view, title,
+            caption + " Cell values (or vector magnitudes) are interpolated to points for display.",
+            field=("POINTS", display_name, label), color_key=name, **kwargs)
+    finally:
+        if smoothed is not None:
+            pvs.Delete(smoothed)
+        if magnitude is not None:
+            pvs.Delete(magnitude)
+
+
+def _pvvis_render_frame(source, result, settings, run_dir, view, title, caption,
                   camera="oblique", field=None, limits=None, center=None, span=None,
-                  time_s=None, edges=False, overlays=(), diverging=False, opacity=1.0):
+                  time_s=None, edges=False, overlays=(), diverging=False, opacity=1.0,
+                  framing_bounds=None, color_key=None):
     source.UpdatePipeline(time_s) if time_s is not None else source.UpdatePipeline()
     info = source.GetDataInformation()
     if info.GetNumberOfCells() == 0:
@@ -545,7 +585,8 @@ def _pvvis_render(source, result, settings, run_dir, view, title, caption,
     display.InterpolateScalarsBeforeMapping = 0
     display.MapScalars = 1
     bounds = list(info.GetBounds())
-    center = list(center) if center is not None else [(bounds[2*i] + bounds[2*i+1]) / 2 for i in range(3)]
+    fit_bounds = bounds if framing_bounds is None else framing_bounds
+    center = list(center) if center is not None else [(fit_bounds[2*i] + fit_bounds[2*i+1]) / 2 for i in range(3)]
     directions = {"oblique": [1.3, 1.0, 1.6], "front": [0, 1, 0],
                   "back": [0, -1, 0], "xy": [0, 0, 1], "yz": [1, 0, 0],
                   "reverse oblique": [-1.3, -1.0, -1.6]}
@@ -557,17 +598,19 @@ def _pvvis_render(source, result, settings, run_dir, view, title, caption,
     up = np.cross(direction, right)
     aspect = settings["image_resolution"][0] / settings["image_resolution"][1]
     if span is None:
-        # Fit the actual projected geometry, not a domain-sized bounding sphere.
-        corners = np.array([[x, y, z] for x in bounds[:2] for y in bounds[2:4] for z in bounds[4:]]) - center
+        # Fit the projected bounding box rather than its bounding sphere.
+        corners = np.array([[x, y, z] for x in fit_bounds[:2]
+                            for y in fit_bounds[2:4] for z in fit_bounds[4:]]) - center
         half_height = max(np.max(np.abs(corners @ up)), np.max(np.abs(corners @ right)) / aspect, 1e-8)
-        span = max(bounds[2*i+1] - bounds[2*i] for i in range(3))
+        span = max(fit_bounds[2*i+1] - fit_bounds[2*i] for i in range(3))
     else:
         half_height = max(span / 2, span / (2 * aspect), 1e-8)
     span = max(span, 1e-8)
     view.CameraParallelProjection = 1
     view.CameraFocalPoint = center
     view.CameraViewUp = up.tolist()
-    view.CameraParallelScale = half_height * (1.38 if field else 1.26)
+    margin = 1.28 if framing_bounds is not None else (1.38 if field else 1.26)
+    view.CameraParallelScale = half_height * margin
     # Lift geometry clear of the scalar bar without shrinking it.
     focal_point = np.asarray(center) - up * half_height * (0.15 if field else 0.)
     view.CameraFocalPoint = focal_point.tolist()
@@ -593,8 +636,9 @@ def _pvvis_render(source, result, settings, run_dir, view, title, caption,
         data_range = list(array.GetRange(-1 if array.GetNumberOfComponents() > 1 else 0))
         if not all(math.isfinite(v) for v in data_range):
             raise ValueError(f"Non-finite range for {name}")
-        limits = list(limits or _pvvis_limits(data_range, name, settings))
-        logarithmic = name in settings.get("log_fields", []) and limits[1] > 0
+        key = color_key or name
+        limits = list(limits or _pvvis_limits(data_range, key, settings))
+        logarithmic = key in settings.get("log_fields", []) and limits[1] > 0
         if logarithmic:
             # Zero stays in data/metadata; only its display color is clamped.
             limits[0] = max(limits[0], limits[1] * 1e-6)
@@ -926,25 +970,6 @@ def _pvvis_surface(result, settings, run_dir, view, units):
         pvs.Delete(source)
 
 
-def _pvvis_render_flow(source, result, settings, run_dir, view, title, caption,
-                       *, field, **kwargs):
-    """Interpolate displayed flow scalars to points, retaining cell diagnostics."""
-    association, name, label = field
-    if association != "CELLS" or name == "Co":
-        return _pvvis_render(source, result, settings, run_dir, view, title, caption,
-                             field=field, **kwargs)
-    smoothed = pvs.CellDatatoPointData(Input=source)
-    try:
-        smoothed.ProcessAllArrays = 0
-        smoothed.CellDataArraytoprocess = [name]
-        return _pvvis_render(
-            smoothed, result, settings, run_dir, view, title,
-            caption + " Colors are smoothed with Cell to Point Data interpolation; local extrema may be reduced.",
-            field=("POINTS", name, label), **kwargs)
-    finally:
-        pvs.Delete(smoothed)
-
-
 def _pvvis_calc(source, name, expression):
     calculation = pvs.Calculator(Input=source)
     calculation.AttributeType = "Cell Data"
@@ -1007,7 +1032,7 @@ def _pvvis_blade_detail(base, wall, t, result, settings, run_dir, view, units):
                            "Inspect near-wall gradients and the trailing-edge shear layer; resolved detail depends on the mesh and saved fields.")
                 for name, label in (("relative_speed", "Blade-relative speed [m/s]"),
                                     ("vorticity_magnitude", "Vorticity magnitude [1/s]")) if not settings.get("mesh_only") else ():
-                    _pvvis_attempt(result, run_dir, f"Blade section {name} {station}", lambda: _pvvis_render_flow(
+                    _pvvis_attempt(result, run_dir, f"Blade section {name} {station}", lambda: _pvvis_render(
                         cropped, result, settings, run_dir, view, f"Blade flow section - {name.replace('_', ' ')} ({station})",
                         caption + " Local color scale.", camera=radial.tolist(), field=("CELLS", name, label),
                         time_s=t, overlays=[outline]))
@@ -1023,7 +1048,7 @@ def _pvvis_blade_detail(base, wall, t, result, settings, run_dir, view, units):
                     arrows.GlyphMode = "Uniform Spatial Distribution (Bounds Based)"
                     arrows.MaximumNumberOfSamplePoints = 200
                     try:
-                        _pvvis_render_flow(cropped, result, settings, run_dir, view, f"Blade-relative flow directions ({station})",
+                        _pvvis_render(cropped, result, settings, run_dir, view, f"Blade-relative flow directions ({station})",
                                       caption + " Equal-length arrows show the in-plane direction; color gives full relative speed, including its out-of-plane component.",
                                       camera=radial.tolist(), field=("CELLS", "relative_speed", "Blade-relative speed [m/s]"),
                                       time_s=t, overlays=[outline, arrows])
@@ -1045,7 +1070,7 @@ def _pvvis_blade_detail(base, wall, t, result, settings, run_dir, view, units):
                                           "Magnified volume-cell section at a chord extremum. Inspect edge resolution, near-wall cells and refinement transitions. A/B label geometry, not an inferred leading/trailing edge.",
                                           camera=radial.tolist(), edges=True, time_s=t)
                         else:
-                            _pvvis_attempt(result, run_dir, f"Near-wall flow {station} {side}", lambda: _pvvis_render_flow(
+                            _pvvis_attempt(result, run_dir, f"Near-wall flow {station} {side}", lambda: _pvvis_render(
                                 zoom, result, settings, run_dir, view, f"Near-wall flow - {side} ({station})",
                                 caption + " Local color scale; cell edges expose the available resolution.",
                                 camera=radial.tolist(), field=("CELLS", "relative_speed", "Blade-relative speed [m/s]"),
@@ -1280,7 +1305,7 @@ return velocity(data)
                             label = f"p - reference [{units[0]}]"
                             diverging = True
                             note = f" Pressure reference = {reference:.10g} {units[0]} (fixed range midpoint, not freestream or acoustic pressure)."
-                        _pvvis_attempt(result, run_dir, f"{name}, {station}, t={t:g}", lambda: _pvvis_render_flow(
+                        _pvvis_attempt(result, run_dir, f"{name}, {station}, t={t:g}", lambda: _pvvis_render(
                             display_source, result, settings, run_dir, view, f"Flow slice - {name.replace('_', ' ')} ({station})",
                             f"Plane {station}, laboratory frame; D={diameter:.6g} m. Inspect wake asymmetry, shear layers and rotor loading. Color range covers the displayed section across all selected phases; compare legends between sections. Full-domain views include the complete inlet-to-outlet extent; detail views are cropped." + note,
                             camera=camera, field=("CELLS", display_name, label), limits=limits,
@@ -1330,8 +1355,7 @@ def _pvvis_vortices(base, selected, result, settings, run_dir, view):
                               "volume_vorticity_magnitude", settings)
         lower = np.min(np.asarray(bounds)[:, :, 0], axis=0)
         upper = np.max(np.asarray(bounds)[:, :, 1], axis=0)
-        center = (lower + upper) / 2
-        span = float(np.linalg.norm(upper - lower))
+        framing_bounds = np.column_stack((lower, upper)).ravel().tolist()
         latest = max(t for t, _ in available)
         for (t, normalized_q), threshold in available.items():
             contour.Isosurfaces = [threshold]
@@ -1347,7 +1371,7 @@ def _pvvis_vortices(base, selected, result, settings, run_dir, view):
                     "The color scale and framing are shared across saved phases and thresholds. "
                     "Cell values are interpolated to points before extracting the isosurface.",
                     camera=camera, field=("POINTS", "vorticity_magnitude", "Vorticity magnitude [1/s]"),
-                    limits=limits, center=center, span=span, time_s=t))
+                    limits=limits, framing_bounds=framing_bounds, time_s=t))
     finally:
         pvs.Delete(contour)
         pvs.Delete(point_data)
@@ -1562,7 +1586,7 @@ def _pvvis_wall(marker, t, result, settings, run_dir, view, units, base=None):
             for camera in ("front", "back", "oblique", "reverse oblique"):
                 _pvvis_attempt(result, run_dir, f"Blade {name}, {camera}", lambda: _pvvis_render(
                     wall, result, settings, run_dir, view, f"Blade wall - {name} ({camera})",
-                    "Inspect local loading or wall-treatment coverage, especially blade tips and roots. Colors show native patch cell values; no surface smoothing is applied. Assess y+ against the chosen turbulence model and wall treatment.",
+                    "Inspect local loading or wall-treatment coverage, especially blade tips and roots. Assess y+ against the chosen turbulence model and wall treatment. Native cell colors are retained for y+.",
                     camera=camera, field=("CELLS", name, label), time_s=t))
         if not mesh_only and "wallShearStress" in wall.CellArrays.Available:
             _pvvis_attempt(result, run_dir, "Blade skin-friction topology", lambda: _pvvis_shear_topology(

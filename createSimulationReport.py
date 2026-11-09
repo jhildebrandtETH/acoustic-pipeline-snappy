@@ -185,7 +185,6 @@ def create_simulation_report(
         times,
         thrusts,
         rev_time,
-        threshold=1e-3,
     )
     thrust_avg = thrust_convergence["mean_N"]
 
@@ -211,7 +210,7 @@ def create_simulation_report(
     )
 
     force_plot, conv_plot, thrust_stability_history = create_force_plots(
-        times, thrusts, report_dir, rev_time, thrust_convergence
+        times, thrusts, report_dir, rev_time
     )
 
     moments_plot = create_moments_plots(times, moments, report_dir, rev_time)

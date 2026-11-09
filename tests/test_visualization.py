@@ -316,7 +316,7 @@ view.UseColorPaletteForBackground = 0
 view.Background = [1, 1, 1]
 view.BackgroundColorMode = 'Single Color'
 settings = {'image_resolution': [1200, 800], 'color_ranges': {}, 'rpm': 4000,
-            'log_fields': ['vorticity_magnitude']}
+            'log_fields': ['vorticity_magnitude', 'wallShearStress']}
 result = {'views': [], 'warnings': []}
 sphere = pvs.Sphere(ThetaResolution=48, PhiResolution=48)
 pressure = pvs.Calculator(Input=sphere)
@@ -325,11 +325,27 @@ pressure.Function = '101325 + 10*coordsX'
 cells = pvs.PointDatatoCellData(Input=pressure)
 _pvvis_render(cells, result, settings, run_dir, view, 'Cell pressure', 'Synthetic',
               camera='front', field=('CELLS', 'p', 'Kinematic pressure'))
+assert result['views'][-1]['association'] == 'POINTS'
 lut = pvs.GetColorTransferFunction('p')
 bar = pvs.GetScalarBar(lut, view)
 fmt = str(bar.LabelFormat)
 labels = [fmt.format(v) if '{' in fmt else fmt % v for v in bar.CustomLabels]
 assert len(set(labels)) == len(labels), labels
+shear = pvs.Calculator(Input=sphere)
+shear.ResultArrayName = 'wallShearStress'
+shear.Function = '(1 + coordsX)*iHat + jHat'
+shear_cells = pvs.PointDatatoCellData(Input=shear)
+_pvvis_render(shear_cells, result, settings, run_dir, view, 'Wall shear', 'Synthetic',
+              field=('CELLS', 'wallShearStress', 'Wall shear magnitude'))
+assert result['views'][-1]['association'] == 'POINTS'
+assert result['views'][-1]['color_scale'] == 'logarithmic'
+yplus = pvs.Calculator(Input=sphere)
+yplus.ResultArrayName = 'yPlus'
+yplus.Function = '1 + coordsX'
+yplus_cells = pvs.PointDatatoCellData(Input=yplus)
+_pvvis_render(yplus_cells, result, settings, run_dir, view, 'Wall y+', 'Synthetic',
+              field=('CELLS', 'yPlus', 'Wall y+'))
+assert result['views'][-1]['association'] == 'CELLS'
 vortex = pvs.Calculator(Input=sphere)
 vortex.ResultArrayName = 'vorticity_magnitude'
 vortex.Function = 'exp(12*coordsX)'
@@ -363,4 +379,4 @@ else:
                                   script_path], capture_output=True, text=True, timeout=120)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             result = json.loads((root / 'result.json').read_text())
-            self.assertEqual(len(result['views']), 4)
+            self.assertEqual(len(result['views']), 6)
