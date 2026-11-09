@@ -473,8 +473,8 @@ def create_simulation_report(
     c.setFont("Helvetica-Bold", 16)
     c.drawString(50, h - 50, "Force Evaluation")
 
-    c.drawImage(str(force_plot), 40, 440, width=510, height=240)
-    c.drawImage(str(conv_plot), 40, 150, width=510, height=240)
+    c.drawImage(str(force_plot), 40, 440, width=510, height=240, preserveAspectRatio=True, anchor="c")
+    c.drawImage(str(conv_plot), 40, 150, width=510, height=240, preserveAspectRatio=True, anchor="c")
 
     if moments_plot is not None:
         c.showPage()
@@ -482,13 +482,13 @@ def create_simulation_report(
         c.setFont("Helvetica-Bold", 16)
         c.drawString(50, h - 50, "Torque Evaluation")
 
-        c.drawImage(str(moments_plot), 40, 440, width=510, height=240)
+        c.drawImage(str(moments_plot), 40, 440, width=510, height=240, preserveAspectRatio=True, anchor="c")
 
     if residual_plot is not None:
         c.showPage()
         c.setFont("Helvetica-Bold", 16)
         c.drawString(50, h - 50, "Residual Evaluation")
-        c.drawImage(str(residual_plot), 40, 350, width=510, height=260)
+        c.drawImage(str(residual_plot), 40, 350, width=510, height=260, preserveAspectRatio=True, anchor="c")
 
         if residual_slope_info is not None:
             c.setFont("Helvetica-Bold", 12)
@@ -614,6 +614,8 @@ def create_simulation_report(
     if not aerodynamics_only:
         from tools.acoustic_comparison import append_comparison_report
         append_comparison_report(c, case_path)
+        from tools.microphone_layout import append_microphone_layout
+        append_microphone_layout(c, case_path, rpm)
 
     progress('embedding visualization images', 95)
     visualization_summary = append_visualization_report(c, case_path, mesh_only=False)

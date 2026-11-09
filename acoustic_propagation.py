@@ -7,7 +7,7 @@ from tools.acoustic_time import case_sample_interval, source_time_statistics, un
 from tools.acoustic_comparison import cache_result, comparison_or_status, load_config, resolve_observer_position
 from tools.acoustic_directivity import settings as directivity_settings, frame, resolve_observers, cache_observers
 
-from tools.plotting import pyplot as plt
+from tools.plotting import pyplot as plt, save_figure
 import torch
 
 from acousticSolver.src.foamacoustics import F1ASolver
@@ -141,9 +141,11 @@ def run_acoustic_solver(
                       **source_stats)
     resampling_path.write_text(json.dumps(resampling, indent=2))
 
-    if SURFACE_SERIES is None and permeable and sphere_metadata.is_file():
-        # Recorded study spheres are fixed: reuse their VTK history directly,
-        # avoiding another full ASCII copy for each diameter.
+    recorded_study = sphere_metadata.is_file() or (
+        SIMULATION_WORKING_DIRECTORY / "acoustic-surfaces.json"
+    ).is_file()
+    if SURFACE_SERIES is None and permeable and recorded_study:
+        # Preserve each frame's point and face IDs so the reader can align its fields.
         acoustic_surface_directory = surface_directory
     elif SURFACE_SERIES is None:
         create_reference_geometry_vtk_series(
@@ -257,7 +259,7 @@ def run_acoustic_solver(
                 axis.set_title(f"{RPM:g} RPM | band total {total:.2f} dB ({frequencies[positive][0]:.1f}-{frequencies[positive][-1]:.1f} Hz)\n"
                                f"Unweighted | FFT spacing {ax.frequency_resolution_hz:.2f} Hz", fontsize=10)
                 axis.legend(loc="lower left", fontsize=8)
-            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            save_figure(fig, output_path, bbox_inches="tight")
             plt.close(fig)
 
     status_path.write_text(

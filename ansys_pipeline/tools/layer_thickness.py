@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 
 import numpy as np
-from .plotting import pyplot as plt
+from .plotting import pyplot as plt, save_figure
 
 
 def _read_list(path):
@@ -118,6 +118,8 @@ def create_thickness_report_data(case_path):
     csv = report/'mesh_first_layer_thickness.csv'
     for path in (image, csv):
         path.unlink(missing_ok=True)
+        if path.suffix == ".png":
+            path.with_suffix(".pdf").unlink(missing_ok=True)
     result = {'status': 'unavailable', 'image': None,
               'method': 'Full first-cell wall-normal depth from wall-face to opposite-face centroids; initial mesh.'}
     try:
@@ -141,19 +143,27 @@ def create_thickness_report_data(case_path):
         result.update(stats, status='complete' if stats['excluded_faces'] == 0 else 'partial',
                       mesh_path=str(mesh), patch=patch, scope=f'Entire {patch} patch (including hub, if present)')
         np.savetxt(csv, rows, delimiter=',', header='x_m,y_m,z_m,wall_face_area_m2,normal_depth_mm', comments='')
-        fig, ax = plt.subplots(figsize=(8, 4.8))
+        fig, (distribution, cumulative) = plt.subplots(
+            2, 1, figsize=(8, 5.2), sharex=True, layout="constrained")
         try:
             h, w = rows[valid, 4], rows[valid, 3]
             upper = max(float(h.max())*1.05, target[1]*1.25 if target else 0, .001)
-            ax.hist(h, bins=np.linspace(0, upper, 61), weights=100*w/w.sum(), color='#4a8195', zorder=2)
+            distribution.hist(h, bins=np.linspace(0, upper, 61), weights=100*w/w.sum(),
+                              color='#176287')
+            order = np.argsort(h)
+            heights, shares = h[order], 100 * np.cumsum(w[order]) / w.sum()
+            cumulative.step(np.r_[0, heights, upper], np.r_[0, shares, 100],
+                            where='post', color='#176287')
+            distribution.set(title='(a) Area-weighted distribution', ylabel='Area per bin [%]')
+            cumulative.set(title='(b) Cumulative wall area', xlabel='First-cell wall-normal height [mm]',
+                           ylabel='Measured area [%]', ylim=(0, 104), xlim=(0, upper))
+            for ax in (distribution, cumulative):
+                ax.grid(axis='y')
+                if target:
+                    ax.axvspan(*target, color='#007D68', alpha=.14, lw=0, zorder=0)
             if target:
-                ax.axvspan(*target, color='#70c7ae', alpha=.28, zorder=1)
-                ax.set_title(f'Green: requested {target[0]:g}-{target[1]:g} mm range')
-            else:
-                ax.set_title('First-cell thickness distribution')
-            ax.set(xlabel='First-cell wall-normal height [mm]', ylabel='Measured wall surface area [%]', xlim=(0, upper))
-            fig.tight_layout()
-            fig.savefig(image, dpi=180)
+                distribution.set_title(f'Target {target[0]:g}–{target[1]:g} mm', loc='right', fontsize=9)
+            save_figure(fig, image)
         finally:
             plt.close(fig)
         result['image'] = str(image)

@@ -16,7 +16,7 @@ ArrayLike = (
 FigureSize = tuple[float, float]
 FrequencyLimits = tuple[float | None, float | None]
 
-CLASSIC_COLORS = ("b", "g", "r", "c", "m", "y", "k")
+CLASSIC_COLORS = ("#176287", "#007D68", "#BB572B", "#488CB1", "#83559B", "#996600", "#415669")
 LINE_STYLES = ("-", "--", "-.", ":")
 
 

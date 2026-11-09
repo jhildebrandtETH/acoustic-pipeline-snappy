@@ -5,7 +5,7 @@ import pandas as pd
 import re
 from pathlib import Path
 from .mesh_quality import latest_mesh_log
-from .plotting import pyplot as plt
+from .plotting import COLORS, pyplot as plt, save_figure
 
 def create_reference_geometry_vtk_series(
     source_directory: Path,
@@ -129,28 +129,13 @@ def create_mesh_element_plot(element_types, report_dir):
 
     mesh_plot = report_dir / "mesh_element_types.png"
 
-    plt.figure(figsize=(5.0, 3.4))
-    bars = plt.bar(labels, values)
-
-    plt.ylabel("Cell share [%]")
-    plt.title("Mesh Element Types")
-    plt.xticks(rotation=30, ha="right")
-    plt.grid(axis="y")
-
-    # --- Add percentage labels on bars ---
-    for bar, val in zip(bars, values):
-        plt.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height(),
-            f"{val:.1f}%",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
-
-    plt.tight_layout()
-    plt.savefig(mesh_plot, dpi=200)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(7.4, 3.5), layout="constrained")
+    bars = ax.barh(labels[::-1], values[::-1], color=COLORS[0])
+    ax.bar_label(bars, fmt="%.1f%%", padding=4)
+    ax.set(xlabel="Cell share [%]", title="Mesh element composition", xlim=(0, 117))
+    ax.grid(axis="x")
+    save_figure(fig, mesh_plot)
+    plt.close(fig)
 
     return mesh_plot
 
@@ -353,158 +338,82 @@ def compute_thrust_stability_history(times, thrusts, rev_time):
     }
 
 
-def create_force_plots(times, thrusts, report_dir, rev_time, thrust_convergence):
+def plot_load_history(times, values, rev_time, path, title, ylabel):
+    """Use all recorded samples and show the final window at native cadence."""
+    end = float(times[-1])
+    start = max(float(times[0]), end - rev_time)
+    final = times >= start
+    fig, (history, detail) = plt.subplots(
+        1, 2, figsize=(9, 3.8), width_ratios=(1.45, 1), layout="constrained")
+    try:
+        history.plot(times, values, color=COLORS[0])
+        history.axvspan(start, end, color=COLORS[0], alpha=.13, lw=0)
+        history.set(xlabel="Physical time [s]", ylabel=ylabel, title="(a) Full history")
+        phase = (times[final] - (end - rev_time)) * (360 / rev_time)
+        window = values[final]
+        detail.plot(phase, window, color=COLORS[0], marker="." if len(window) < 2 else None)
+        mean = float(np.mean(window))
+        limits = None
+        if len(window) >= 20:
+            lo, hi = np.percentile(window, [1, 99])
+            central_span = max(float(hi - lo), abs(float(lo)) * .002, 1e-9)
+            if np.ptp(window) > 5 * central_span:
+                limits = (lo - .15 * central_span, hi + .15 * central_span)
+                detail.set_ylim(*limits)
+                outside = int(np.sum((window < limits[0]) | (window > limits[1])))
+                detail.text(.98, .96, f"{outside} samples outside view", transform=detail.transAxes,
+                            ha="right", va="top", fontsize=8,
+                            bbox={"facecolor": "white", "edgecolor": "none", "alpha": .9})
+        if limits is None or limits[0] <= mean <= limits[1]:
+            detail.axhline(mean, color=COLORS[1], ls="--", lw=1, label="Sample mean")
+            detail.legend(loc="best")
+        label = "(b) Final revolution" if end - float(times[0]) >= .99 * rev_time else "(b) Partial revolution"
+        detail.set(xlabel="Angle into final revolution [deg]", ylabel=ylabel,
+                   title=label, xlim=(0, 360), xticks=[0, 90, 180, 270, 360])
+        for ax in (history, detail):
+            ax.grid(axis="y")
+        fig.suptitle(title, weight="bold")
+        save_figure(fig, path)
+    finally:
+        plt.close(fig)
 
+
+def create_force_plots(times, thrusts, report_dir, rev_time, thrust_convergence):
     force_plot = report_dir / "force_plot.png"
     conv_plot = report_dir / "force_convergence.png"
-
-    latest_time = float(times[-1])
-    last_rev_start = latest_time - rev_time
-
-    # -----------------------------
-    # Force history plot
-    # -----------------------------
-    # The raw force plot is kept as a general overview. Extreme initialization
-    # spikes are excluded only from the axis scaling, not from the data itself.
-    plot_mask = times > 0.001
-    plot_thrusts = thrusts[plot_mask]
-
-    if len(plot_thrusts) > 0:
-        y_min = np.percentile(plot_thrusts, 1)
-        y_max = np.percentile(plot_thrusts, 99)
-        y_margin = 0.15 * max(y_max - y_min, 1e-12)
-    else:
-        y_min, y_max = np.min(thrusts), np.max(thrusts)
-        y_margin = 0.15 * max(y_max - y_min, 1e-12)
-
-    plt.figure(figsize=(12, 5))
-    plt.plot(times, thrusts, label="Pressure force Fz")
-
-    plt.axvspan(
-        last_rev_start,
-        latest_time,
-        alpha=0.2,
-        label="final revolution window",
-    )
-
-    plt.ylim(y_min - y_margin, y_max + y_margin)
-    plt.xlabel("Time [s]")
-    plt.ylabel("Force Fz [N]")
-    plt.title("Pressure Force Fz")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(force_plot, dpi=200)
-    plt.close()
-
-    # -----------------------------
-    # Thrust stability metric plot
-    # -----------------------------
-    # This plot directly visualizes the implemented convergence criterion:
-    # std(F) / |mean(F)| evaluated over a sliding one-revolution window.
-    threshold = thrust_convergence["threshold"]
-    status = "PASSED" if thrust_convergence["passed"] else "FAILED"
-    final_relative_std = thrust_convergence["relative_std"]
+    plot_load_history(times, thrusts, rev_time, force_plot, "Axial thrust", r"Thrust, $F_y$ [N]")
 
     stability_history = compute_thrust_stability_history(times, thrusts, rev_time)
     metric_time = stability_history["time"]
     metric = stability_history["relative_std"]
-    valid = np.isfinite(metric) & (metric > 0.0)
-
-    plt.figure(figsize=(12, 5))
-
-    if np.any(valid):
-        plt.plot(
-            metric_time[valid],
-            metric[valid],
-            label=r"sliding 1-rev $\sigma_F / |\overline{F}|$",
-        )
-
-    plt.axhline(
-        threshold,
-        linestyle="--",
-        label=f"criterion = {threshold:g}",
-    )
-
-    plt.axvspan(
-        last_rev_start,
-        latest_time,
-        alpha=0.2,
-        label="final evaluation window",
-    )
-
-    if final_relative_std is not None:
-        text = (
-            f"Final 1-rev result: {final_relative_std:.3e} → {status}\n"
-            f"Criterion: relative thrust fluctuation < {threshold:g}"
-        )
-    else:
-        text = f"Final 1-rev result could not be evaluated → {status}"
-
-    plt.text(
-        0.02,
-        0.95,
-        text,
-        transform=plt.gca().transAxes,
-        ha="left",
-        va="top",
-        bbox=dict(facecolor="white", edgecolor="black", alpha=0.85),
-    )
-
-    plt.yscale("log")
-    plt.xlabel("Time [s]")
-    plt.ylabel(r"Relative thrust fluctuation $\sigma_F / |\overline{F}|$")
-    plt.title("Thrust Stability Criterion over Sliding One-Revolution Window")
-    plt.grid(True, which="both")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(conv_plot, dpi=200)
-    plt.close()
-
+    valid = np.isfinite(metric)
+    threshold = thrust_convergence["threshold"]
+    fig, ax = plt.subplots(figsize=(9, 3.5), layout="constrained")
+    try:
+        if np.any(valid):
+            ax.plot(metric_time[valid], metric[valid], label="Sliding one-revolution window")
+        ax.axhline(threshold, color=COLORS[1], ls="--", label=f"Criterion ({threshold:g})")
+        ax.axvspan(max(float(times[0]), float(times[-1]) - rev_time), float(times[-1]), color=COLORS[0], alpha=.13, lw=0)
+        ax.set(xlabel="Physical time [s]", ylabel=r"$sigma_F / |overline{F}|$ [-]",
+               title="Thrust variability over one revolution")
+        if np.any(metric[valid] > 0):
+            # The linear region keeps genuinely zero-variance windows visible.
+            ax.set_yscale("symlog", linthresh=threshold / 10)
+        final = thrust_convergence["relative_std"]
+        status = "Passed" if thrust_convergence["passed"] else "Failed"
+        if final is not None:
+            ax.set_title(f"Final window {final:.2e} | {status}", loc="right", fontsize=9)
+        ax.grid(axis="y")
+        ax.legend(loc="best")
+        save_figure(fig, conv_plot)
+    finally:
+        plt.close(fig)
     return force_plot, conv_plot, stability_history
 
 
 def create_moments_plots(times, moments, report_dir, rev_time):
-
     moments_plot = report_dir / "moments_plot.png"
-
-    latest_time = float(times[-1])
-    last_rev_start = latest_time - rev_time
-
-    # -----------------------------
-    # Moments history plot
-    # -----------------------------
-
-    plot_mask = times > 0.001
-    plot_moments = moments[plot_mask]
-
-    if len(plot_moments) > 0:
-        y_min = np.percentile(plot_moments, 1)
-        y_max = np.percentile(plot_moments, 99)
-        y_margin = 0.15 * max(y_max - y_min, 1e-12)
-    else:
-        y_min, y_max = np.min(moments), np.max(moments)
-        y_margin = 0.15 * max(y_max - y_min, 1e-12)
-
-    plt.figure(figsize=(12, 5))
-    plt.plot(times, moments, label="Moments (pressure & viscous) M_y")
-
-    plt.axvspan(
-        last_rev_start,
-        latest_time,
-        alpha=0.2,
-        label="final revolution window",
-    )
-
-    plt.ylim(y_min - y_margin, y_max + y_margin)
-    plt.xlabel("Time [s]")
-    plt.ylabel("Moment My [Nm]")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(moments_plot, dpi=200)
-    plt.close()
-
+    plot_load_history(times, moments, rev_time, moments_plot, "Shaft torque", r"Torque, $M_y$ [N m]")
     return moments_plot
 
 
@@ -619,28 +528,20 @@ def create_residual_plots(residual_file, report_dir, rev_time, latest_time):
 
     last_rev_start = latest_time - rev_time
 
-    plt.figure(figsize=(12, 5))
-
-    for col in df.columns:
-        if col != "Time":
-            plt.plot(df["Time"], df[col], label=col)
-
-    plt.axvspan(
-        last_rev_start,
-        latest_time,
-        alpha=0.2,
-        label="final revolution window",
-    )
-
-    plt.yscale("log")
-    plt.xlabel("Time [s]")
-    plt.ylabel("Residual")
-    plt.title("Residual Convergence")
-    plt.grid(True, which="both")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(residual_plot, dpi=200)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(9, 4.1), layout="constrained")
+    try:
+        styles = ("-", "--", "-.", ":")
+        for index, col in enumerate(df.columns.drop("Time")):
+            values = df[col].where(df[col] > 0)
+            ax.plot(df["Time"], values, label=col, ls=styles[index % len(styles)])
+        ax.axvspan(last_rev_start, latest_time, color=COLORS[0], alpha=.13, lw=0)
+        ax.set(yscale="log", xlabel="Physical time [s]", ylabel="Solver residual [-]",
+               title="Residual histories")
+        ax.grid(axis="y")
+        ax.legend(loc="best", ncol=3)
+        save_figure(fig, residual_plot)
+    finally:
+        plt.close(fig)
 
     residual_slope_info = evaluate_residual_slopes(df, rev_time, latest_time)
 

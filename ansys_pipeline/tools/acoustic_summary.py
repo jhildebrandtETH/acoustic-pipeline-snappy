@@ -7,7 +7,8 @@ import numpy as np
 
 def plot_psd_overlay(report, experimental_spectra, metadata):
     from tools.acoustic_comparison import levels
-    from tools.plotting import pyplot as plt
+    from tools.acoustic_annotations import add_bpf_markers
+    from tools.plotting import pyplot as plt, save_figure
     from tools import MATPLOTLIB_LOCK
     report = Path(report)
     sources = {kind: np.loadtxt(report / f'acoustic-tonal-{kind}.csv', delimiter=',', skiprows=1)
@@ -22,9 +23,9 @@ def plot_psd_overlay(report, experimental_spectra, metadata):
         ax.set_title(f"{metadata['geometry']} | {metadata['rpm']:g} RPM | microphone {metadata['microphone_channel']} | "
                      f"{metadata['repeat_count']} experimental repeats", loc='left', fontsize=10, pad=12)
         ax.fill_between(measured[:, 0], levels(repeats.min(axis=0), floor), levels(repeats.max(axis=0), floor),
-                        color='#db7525', alpha=.14, label='Experimental repeat range')
+                        color='#BB572B', alpha=.14, label='Experimental repeat range')
         for kind, color, label, marker in [('simulated', '#2463a6', 'Simulation', '^'),
-                                           ('measured', '#db7525', 'Experimental energy mean', 'o')]:
+                                           ('measured', '#BB572B', 'Experimental energy mean', 'o')]:
             data = sources[kind]
             ax.plot(data[:, 0], levels(data[:, 1], floor), color=color, lw=1, label=label)
             tones = np.array(metadata['tonal_analysis']['spectra'][kind]['detected_tones_hz'])
@@ -34,7 +35,8 @@ def plot_psd_overlay(report, experimental_spectra, metadata):
                        label='Simulated tones' if kind == 'simulated' else 'Experimental tones')
         ax.set(xscale='log', xlim=metadata['tonal_analysis']['covered_hz'],
                xlabel='Frequency [Hz]', ylabel='PSD [dB re (20 µPa)²/Hz]')
-        ax.grid(alpha=.2)
+        add_bpf_markers(ax, metadata['rpm'], metadata.get('blade_count', 2))
+        ax.grid(axis='y', alpha=.25)
         ax.legend(fontsize=8, ncol=2)
         fig.text(.10, .12, f"Band total: simulation {metadata['simulated_band_limited_spl_db']:.2f} dB | "
                  f"experiment {metadata['measured_band_limited_spl_db']:.2f} dB", fontsize=10)
@@ -42,7 +44,7 @@ def plot_psd_overlay(report, experimental_spectra, metadata):
         note = metadata.get('source_note') or ('PROVISIONAL: observer and microphone positions differ.' if not metadata['positions_match'] else '')
         if note:
             fig.text(.10, .025, note, color='#a22b2b', fontsize=8, wrap=True)
-        fig.savefig(report / 'acoustic-psd-overlay.png', dpi=160)
+        save_figure(fig, report / 'acoustic-psd-overlay.png')
         plt.close(fig)
 
 
@@ -125,6 +127,13 @@ def append_summary(canvas, case):
             canvas.drawString(40, y, text)
             y -= 13
         y -= 3
+    error_plot = report / 'acoustic-signed-error.png'
+    if error_plot.is_file():
+        page('Signed narrow-band SPL difference')
+        canvas.drawImage(str(error_plot), 25, height - 380, width=width - 50, height=305,
+                         preserveAspectRatio=True, anchor="c")
+        canvas.setFont('Helvetica', 10)
+        canvas.drawString(40, height - 410, 'Positive values indicate a louder simulation.')
     for kind in data.get('tonal_analysis', {}).get('spectra', {}):
         page(f"Estimated tonal / broadband SPL — {kind}")
         canvas.drawImage(str(report / f'acoustic-tonal-{kind}.png'), 25, height - 430,

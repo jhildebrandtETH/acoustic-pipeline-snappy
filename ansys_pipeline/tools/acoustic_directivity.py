@@ -51,9 +51,9 @@ def measurement_channels(path, geometry, rpm):
     return data['sound']['channels']
 
 
-def resolve_observers(case, rpm, config):
+def recorded_microphones(case, rpm, config):
+    """Read channel positions shared by every matching experimental repeat."""
     from tools.acoustic_comparison import case_geometry, match_measurements
-    frame(config)
     paths = match_measurements(config['measurements_directory'], case_geometry(case), rpm)
     positions = None
     for path in paths:
@@ -63,7 +63,15 @@ def resolve_observers(case, rpm, config):
             positions = current
         elif set(current) != set(positions) or any(not np.allclose(current[k], positions[k], atol=1e-6, rtol=0) for k in current):
             raise ValueError('Matched repeats must have the same channels and microphone positions')
-    if not positions or str(config['microphone_channel']) not in positions:
+    if not positions:
+        raise ValueError('No microphone positions in the matched measurements')
+    return positions
+
+
+def resolve_observers(case, rpm, config):
+    frame(config)
+    positions = recorded_microphones(case, rpm, config)
+    if str(config['microphone_channel']) not in positions:
         raise ValueError('Selected microphone channel is missing from the measurements')
     overrides = settings(config).get('microphone_positions_m', {})
     if not isinstance(overrides, dict) or set(overrides) - set(positions):
@@ -199,24 +207,27 @@ def plane_angle_caption(plane):
         f"0 deg: {plane['zero_direction']}; 90 deg: {plane['positive_direction']} (experimental axes)")
 
 
-def integrated_components(frequency, density, bounds, config):
+def integrated_components(frequency, density, bounds, config, harmonic_bands):
     from tools.acoustic_tonal import separate_tones, tonal_settings
     from tools.acoustic_comparison import integrate_density
     broadband, tonal, _ = separate_tones(frequency, density, tonal_settings(config))
-    return {name: float(integrate_density(frequency, psd, np.array(bounds))[0])
-            for name, psd in [('overall', density), ('broadband', broadband), ('tonal', tonal)]}
+    power = {name: float(integrate_density(frequency, psd, np.array(bounds))[0])
+             for name, psd in [('overall', density), ('broadband', broadband), ('tonal', tonal)]}
+    power.update({name: float(integrate_density(frequency, density, np.array(band))[0])
+                  for name, band in harmonic_bands.items()})
+    return power
 
 
 def create_directivity(case, config):
     from tools.acoustic_comparison import match_measurements, welch_density, levels
     data = read_cache(case, config)
     ids = data['channel_ids'].tolist()
-    planes = [plane_coordinates(p, ids, data['experimental_positions_m'], config)
-              for p in settings(config).get('planes', [])]
-    elevation, omitted = elevation_planes(ids, data['experimental_positions_m'], config)
-    planes = elevation + planes
-    if not planes:
-        raise ValueError('No usable directivity plane. ' + '; '.join(omitted or ['Configure at least one directivity plane']))
+    planes, omitted = elevation_planes(ids, data['experimental_positions_m'], config)
+    for plane in settings(config).get('planes', []):
+        try:
+            planes.append(plane_coordinates(plane, ids, data['experimental_positions_m'], config))
+        except ValueError as exc:
+            omitted.append(f"{plane['name']}: {exc}")
     duration = data['pressure_pa'].shape[1] / float(data['sampling_frequency_hz'])
     spectra = {k: {'simulated': [welch_density(row, float(data['sampling_frequency_hz']), duration)], 'measured': []}
                for k, row in zip(ids, data['pressure_pa'])}
@@ -232,22 +243,43 @@ def create_directivity(case, config):
               min(config['maximum_frequency_hz'], *(float(f[-1]) for f, _ in all_spectra))]
     if bounds[0] >= bounds[1]:
         raise ValueError('No common positive-frequency range for directivity')
-    summary = dict(status='complete', geometry=str(data['geometry']), rpm=float(data['rpm']),
+    rpm = float(data['rpm'])
+    bpf = rpm * config.get('blade_count', 2) / 60
+    # A Hann main lobe spans approximately two FFT bins on either side.
+    half_width = min(2 / duration, bpf / 4)
+    harmonic_bands = {}
+    for order in (1, 2):
+        lo, hi = order * bpf - half_width, order * bpf + half_width
+        if bounds[0] <= lo < hi <= bounds[1]:
+            harmonic_bands[f'bpf_{order}'] = [lo, hi]
+    summary = dict(status='complete' if planes else 'unavailable', geometry=str(data['geometry']), rpm=rpm,
+                   harmonic_bands_hz=harmonic_bands,
                    minimum_frequency_bpf_multiple=config.get('minimum_frequency_bpf_multiple', .5),
                    covered_hz=bounds, segment_duration_s=duration, planes=planes, channels={},
                    omitted_planes=omitted,
                    settings=settings(config), tonal_settings=config.get('tonal_analysis', {}),
                    measurement_files=[str(p) for p in paths],
                    note='Raw SPL at microphone distances; no distance normalization. Sparse points are not a resolved directivity pattern.')
+    if not planes:
+        summary['detail'] = 'No usable directivity plane. ' + '; '.join(omitted or ['Configure at least one directivity plane'])
     for index, channel in enumerate(ids):
         row = dict(observer_m=data['observer_m'][index].tolist(), experimental_position_m=data['experimental_positions_m'][index].tolist())
         for kind, group in spectra[channel].items():
-            powers = [integrated_components(f, p, bounds, config) for f, p in group]
+            powers = [integrated_components(f, p, bounds, config, harmonic_bands) for f, p in group]
             mean = {key: float(np.mean([p[key] for p in powers])) for key in powers[0]}
             row[kind] = dict(power_pa2=mean, **{key + '_spl_db': float(levels(value, config['floor_db'])) if value > 0 else None for key, value in mean.items()})
+            if kind == 'measured':
+                row[kind]['repeat_range_db'] = {}
+                for key, value in mean.items():
+                    if value > 0:
+                        repeats = [p[key] for p in powers]
+                        span = np.array([min(repeats), max(repeats)])
+                        row[kind]['repeat_range_db'][key] = levels(span, config['floor_db']).tolist()
         summary['channels'][channel] = row
     report = Path(case) / 'report'
-    plot_directivity(report, summary)
+    summary['channel_comparison_figure'] = plot_channel_comparison(report, summary)
+    if planes:
+        plot_directivity(report, summary)
     with (report / 'acoustic-directivity.csv').open('w', newline='', encoding='utf-8') as stream:
         writer = csv.writer(stream)
         writer.writerow(['channel', 'source', 'x_m', 'y_m', 'z_m', 'overall_spl_db', 'broadband_spl_db', 'tonal_spl_db'])
@@ -257,8 +289,77 @@ def create_directivity(case, config):
     return summary
 
 
+def plot_channel_comparison(report, summary):
+    """Compare matched positions without imposing an angular plane on the array."""
+    from tools import MATPLOTLIB_LOCK
+    from tools.plotting import COLORS, pyplot as plt, save_figure
+
+    channels = summary['channels']
+    indices = np.arange(len(channels))
+    metrics = [('overall', 'Overall SPL'), ('broadband', 'Estimated broadband SPL'),
+               ('bpf_1', 'First BPF band'), ('bpf_2', 'Second BPF band')]
+    filename = 'acoustic-microphone-comparison.png'
+    with MATPLOTLIB_LOCK:
+        fig, axes = plt.subplots(2, 2, figsize=(10.5, 6.5), sharex=True)
+        try:
+            fig.subplots_adjust(left=.105, right=.98, top=.81, bottom=.17, hspace=.37, wspace=.25)
+            fig.suptitle(f"{summary['geometry']} | {summary['rpm']:g} RPM | Matched microphone comparison",
+                         x=.105, ha='left', fontsize=15, weight='bold')
+            for index, (ax, (metric, title)) in enumerate(zip(axes.flat, metrics)):
+                simulated = [row['simulated'].get(metric + '_spl_db') for row in channels.values()]
+                measured = [row['measured'].get(metric + '_spl_db') for row in channels.values()]
+                repeat_ranges = [row['measured']['repeat_range_db'].get(metric) for row in channels.values()]
+                valid = [(x + .12, *span) for x, span in zip(indices, repeat_ranges) if span is not None]
+                if valid:
+                    x, low, high = zip(*valid)
+                    ax.vlines(x, low, high, color=COLORS[1], alpha=.65, lw=1.6, label='Experiment repeat range')
+                ax.plot(indices - .12, np.asarray(simulated, dtype=float), 'o', color=COLORS[0],
+                        ms=5, label='FW-H simulation')
+                ax.plot(indices + .12, np.asarray(measured, dtype=float), 's', color=COLORS[1],
+                        ms=5, label='Experiment energy mean')
+                bounds = summary['harmonic_bands_hz'].get(metric)
+                if bounds:
+                    title += f' ({bounds[0]:.1f}–{bounds[1]:.1f} Hz)'
+                if not any(value is not None for value in simulated + measured):
+                    ax.text(.5, .5, 'Unavailable in common frequency range',
+                            transform=ax.transAxes, ha='center', fontsize=9)
+                ax.set_title(f"({chr(97 + index)}) {title}", fontsize=10)
+                ax.set_xlim(-.55, len(channels) - .45)
+                ax.grid(axis='y')
+                if index % 2 == 0:
+                    ax.set_ylabel('SPL [dB re 20 µPa]', fontsize=9)
+                ax.set_xticks(indices, ['M' + channel for channel in channels], fontsize=8)
+            handles, labels = axes[0, 0].get_legend_handles_labels()
+            fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(.55, .91),
+                       ncol=3, frameon=False)
+            fig.text(.105, .074, f"Common band {summary['covered_hz'][0]:.1f}–{summary['covered_hz'][1]:.1f} Hz | "
+                     f"{len(summary['measurement_files'])} measured repeats | matched positions", fontsize=9)
+            fig.text(.105, .038, 'BPF bands include all energy in their stated intervals. Each panel has its own SPL scale.', fontsize=8)
+            save_figure(fig, report / filename)
+        finally:
+            plt.close(fig)
+
+    with (report / 'acoustic-microphone-comparison.csv').open('w', newline='', encoding='utf-8') as stream:
+        writer = csv.writer(stream)
+        writer.writerow(['channel', 'x_m', 'y_m', 'z_m', 'metric', 'lower_hz', 'upper_hz',
+                         'simulation_db', 'experiment_db', 'simulation_minus_experiment_db',
+                         'experiment_min_db', 'experiment_max_db'])
+        for channel, row in channels.items():
+            for metric, _ in metrics:
+                band = summary['harmonic_bands_hz'].get(metric) if metric.startswith('bpf_') else summary['covered_hz']
+                simulated = row['simulated'].get(metric + '_spl_db')
+                measured = row['measured'].get(metric + '_spl_db')
+                difference = simulated - measured if simulated is not None and measured is not None else None
+                spread = row['measured']['repeat_range_db'].get(metric)
+                writer.writerow([channel, *row['observer_m'], metric, *(band or (None, None)),
+                                 simulated, measured, difference, *(spread or (None, None))])
+    return filename
+
+
+
+
 def plot_directivity(report, summary):
-    from tools.plotting import pyplot as plt
+    from tools.plotting import pyplot as plt, save_figure
     from matplotlib.ticker import MaxNLocator
     from tools import MATPLOTLIB_LOCK
     maximum_gap = float(summary['settings'].get('maximum_connected_gap_deg', 60))
@@ -304,7 +405,7 @@ def plot_directivity(report, summary):
             fig.text(.5, .07, 'Markers are computed/measured positions; lines only guide the eye. Tonal/broadband split is estimated.', ha='center', fontsize=9)
             fig.text(.5, .025, plane_angle_caption(plane), ha='center', fontsize=8)
             filename = f'acoustic-directivity-plane-{index + 1}.png'
-            fig.savefig(Path(report) / filename, dpi=160)
+            save_figure(fig, Path(report) / filename)
             plt.close(fig)
             plane['figure'] = filename
         plane['comparison_figures'] = plot_component_comparisons(report, summary, plane, index, limits, maximum_gap)
@@ -312,7 +413,7 @@ def plot_directivity(report, summary):
 
 def plot_component_comparisons(report, summary, plane, index, limits, maximum_gap):
     """Overlay simulation and experiment separately for each integrated SPL."""
-    from tools.plotting import pyplot as plt
+    from tools.plotting import pyplot as plt, save_figure
     from matplotlib.ticker import MaxNLocator
     from tools import MATPLOTLIB_LOCK
     figures = {}
@@ -356,7 +457,7 @@ def plot_component_comparisons(report, summary, plane, index, limits, maximum_ga
                 fig.text(.5, .065, 'Tonal / broadband separation is estimated.', ha='center', fontsize=9)
             fig.text(.5, .025, plane_angle_caption(plane), ha='center', fontsize=8)
             filename = f'acoustic-directivity-plane-{index + 1}-{component}.png'
-            fig.savefig(Path(report) / filename, dpi=160)
+            save_figure(fig, Path(report) / filename)
             plt.close(fig)
             figures[component] = filename
     return figures
@@ -382,6 +483,14 @@ def append_directivity_report(canvas, case):
     if data['status'] == 'disabled':
         return
     width, height = canvas._pagesize
+    channel_plot = data.get('channel_comparison_figure')
+    if channel_plot:
+        if canvas._code:
+            canvas.showPage()
+        canvas.setFont('Helvetica-Bold', 16)
+        canvas.drawString(40, height - 50, 'Acoustic comparison across all microphones')
+        canvas.drawImage(str(path.parent / channel_plot), 25, height - 420,
+                         width=width - 50, height=340, preserveAspectRatio=True, anchor='c')
     if data['status'] != 'complete':
         from reportlab.lib.utils import simpleSplit
         if canvas._code:

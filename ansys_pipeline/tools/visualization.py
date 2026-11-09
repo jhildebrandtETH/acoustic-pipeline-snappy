@@ -22,7 +22,8 @@ def visualization_settings(case_path, rpm, acoustic_surface, overrides=None):
         "statistics_revolutions": 5.0, "volume_phases": 4,
         "wake_stations_D": [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0],
         "q_over_omega2": [0.1, 0.5, 1.0],
-        "observer_m": [1.0, 0.0, 0.0], "diameter_m": None,
+        "skin_friction_sign": -1,
+        "observer_m": None, "diameter_m": None,
         "timeout_seconds": 21600, "threads": 2,
         "color_ranges": {},
         "log_fields": ["vorticity_magnitude", "wallShearStress", "dpdt_rms"],
@@ -48,13 +49,16 @@ def visualization_settings(case_path, rpm, acoustic_surface, overrides=None):
     if (len(settings["image_resolution"]) != 2 or
             any(type(v) is not int or v < 600 for v in settings["image_resolution"])):
         raise ValueError("image_resolution must contain two integers >= 600")
-    if len(settings["observer_m"]) != 3 or not all(math.isfinite(float(v)) for v in settings["observer_m"]):
+    observer = settings["observer_m"]
+    if observer is not None and (len(observer) != 3 or not all(math.isfinite(float(v)) for v in observer)):
         raise ValueError("observer_m must contain three finite coordinates")
     for key in ("wake_stations_D", "q_over_omega2"):
         if not settings[key] or not all(math.isfinite(float(v)) for v in settings[key]):
             raise ValueError(f"{key} must contain finite values")
     if any(float(v) <= 0 for v in settings["q_over_omega2"]):
         raise ValueError("q_over_omega2 thresholds must be positive")
+    if type(settings["skin_friction_sign"]) is not int or settings["skin_friction_sign"] not in {-1, 1}:
+        raise ValueError("skin_friction_sign must be -1 or 1")
     range_keys = {"surface_p", "surface_speed", "surface_p_fluctuation", "p_mean", "p_rms", "dpdt_rms",
                   "volume_speed", "volume_axial_velocity", "volume_p", "volume_vorticity_magnitude",
                   "volume_k", "volume_Co", "volume_swirl_velocity", "p", "yPlus", "wallShearStress"}
@@ -274,6 +278,14 @@ def select_report_views(views, maximum=32):
             key = (item['title'], item.get('camera'))
             if key not in required or item.get('time_s', 0) > required[key].get('time_s', 0):
                 required[key] = item
+    # Preserve complementary angles for Q and the primary wall diagnostics.
+    primary_q = next((item["title"] for item in views if item["title"].startswith("Vortex structures")), None)
+    for item in views:
+        title = item["title"]
+        if title == primary_q or title.startswith(("Blade skin-friction topology", "Blade wall - yPlus", "Blade wall - wallShearStress", "Blade-relative flow directions")):
+            key = (title, item.get("camera"))
+            if key not in required or item.get("time_s", 0) > required[key].get("time_s", 0):
+                required[key] = item
     selected = list(required.values())
     required_ids = {id(item) for item in selected}
     groups = {key: [item for item in items if id(item) not in required_ids]
@@ -357,7 +369,7 @@ def append_visualization_report(c, case_path, mesh_only=None):
         c.drawRightString(w - 42, 19, f"Visual atlas | Page {c.getPageNumber()}")
 
     new_page("Scientific Visual Atlas - Coverage and Interpretation")
-    y = paragraph(f"Status: {manifest['status']} | Generated views: {len(manifest['views'])} | Selected views: {len(selected_views)} | Up to {manifest.get('settings', {}).get('report_max_views', 32)} views per chapter", h - 63, 11)
+    y = paragraph(f"Status: {manifest['status']} | Generated views: {len(manifest['views'])} | Selected views: {len(selected_views)} | Selection target: {manifest.get('settings', {}).get('report_max_views', 32)} views per chapter", h - 63, 11)
     notes = [
         "These figures show saved CFD fields and acoustic-surface diagnostics. Hydrodynamic pressure, its fluctuations and vortex structures are not radiated sound or SPL. Use the FW-H observer spectrum for the acoustic prediction. Steady loading on rotating panels can still radiate tonal noise; low rotating-frame RMS does not imply low sound.",
         "Rotation axis: +y through the origin; lengths in metres. Rotor phase is omega*t modulo 360 degrees, relative to solver t=0. Signed y/D stations are shown on both sides of the rotor; identify the downstream side using axial velocity.",
@@ -549,7 +561,8 @@ def _pvvis_render(source, result, settings, run_dir, view, title, caption,
     bounds = list(info.GetBounds())
     center = list(center) if center is not None else [(bounds[2*i] + bounds[2*i+1]) / 2 for i in range(3)]
     directions = {"oblique": [1.3, 1.0, 1.6], "front": [0, 1, 0],
-                  "back": [0, -1, 0], "xy": [0, 0, 1], "yz": [1, 0, 0]}
+                  "back": [0, -1, 0], "xy": [0, 0, 1], "yz": [1, 0, 0],
+                  "reverse oblique": [-1.3, -1.0, -1.6]}
     direction = np.asarray(directions[camera] if isinstance(camera, str) else camera, dtype=float)
     direction /= np.linalg.norm(direction)
     up = np.array([0, 0, 1] if isinstance(camera, str) and camera in {"front", "back"} else [0, 1, 0], dtype=float)
@@ -575,7 +588,7 @@ def _pvvis_render(source, result, settings, run_dir, view, title, caption,
     view.CameraPosition = (focal_point + direction * span * 3).tolist()
     # Oblique blade-section cuts do not have a Cartesian horizontal axis.
     # Three projected axes on one line falsely suggest a simple x/z section.
-    view.AxesGrid.Visibility = int(isinstance(camera, str))
+    view.AxesGrid.Visibility = int(isinstance(camera, str) and camera not in {"oblique", "reverse oblique", "front", "back"})
     view.AxesGrid.UseCustomBounds = 1
     view.AxesGrid.AxesToLabel = sum(1 << i for i in range(3) if abs(direction[i]) < .95)
     view.AxesGrid.CustomBounds = [value for i in range(3) for value in
@@ -636,10 +649,12 @@ def _pvvis_render(source, result, settings, run_dir, view, title, caption,
         bar.Position = [0.2, 0.065]
     else:
         display.ColorArrayName = ["POINTS", ""]
-    for overlay in overlays:
+    for item in overlays:
+        overlay, color, width = item if isinstance(item, tuple) else (item, (.35, .38, .42), 1.)
         od = pvs.Show(overlay, view)
         od.ColorArrayName = ["POINTS", ""]
-        od.DiffuseColor = [0.35, 0.38, 0.42]
+        od.DiffuseColor = list(color)
+        od.LineWidth = width
         od.Opacity = 1.0
     # Explicitly refresh clipping after moving between observer, rotor and
     # near-wall scales. This works with local offscreen RenderView backends.
@@ -838,16 +853,19 @@ def _pvvis_surface(result, settings, run_dir, view, units):
                     pvs.Delete(rotated)
                     pvs.Delete(blade)
             _pvvis_attempt(result, run_dir, "Permeable enclosure", enclosure_view)
-        observer = pvs.Sphere(Center=settings["observer_m"], Radius=span * 0.025)
-        connector = pvs.Line(Point1=[0, 0, 0], Point2=settings["observer_m"])
-        group = pvs.GroupDatasets(Input=[source, observer, connector])
-        _pvvis_attempt(result, run_dir, "Observer geometry", lambda: _pvvis_render(
-            group, result, settings, run_dir, view, "Acoustic surface and observer location",
-            f"Sphere marker: observer at {settings['observer_m']} m; line connects rotor origin and observer. Marker radius is illustrative. This is the observer used by the current acoustic stage unless explicitly overridden for this atlas.",
-            camera="oblique"))
-        pvs.Delete(group)
-        pvs.Delete(connector)
-        pvs.Delete(observer)
+        if settings["observer_m"] is not None:
+            marker = pvs.Sphere(Center=settings["observer_m"], Radius=span * .025)
+            connector = pvs.Line(Point1=[0, 0, 0], Point2=settings["observer_m"])
+            group = pvs.GroupDatasets(Input=[source, marker, connector])
+            try:
+                _pvvis_attempt(result, run_dir, "Configured reference geometry", lambda: _pvvis_render(
+                    group, result, settings, run_dir, view, "Acoustic surface and configured reference point",
+                    f"Case-local atlas reference at {settings['observer_m']} m. "
+                    "See the microphone geometry page for the acoustic observer positions.", camera="oblique"))
+            finally:
+                pvs.Delete(group)
+                pvs.Delete(connector)
+                pvs.Delete(marker)
         for t, path in selected:
             data = _pvvis_read_surface(path)
             source.GetClientSideObject().SetOutput(data)
@@ -887,7 +905,7 @@ def _pvvis_surface(result, settings, run_dir, view, units):
                 ("dpdt_rms", f"dp/dt RMS [({units[0]})/s]", "Surface pressure-change RMS", "Highlights rapidly changing panel pressure; interval first differences follow the sampled panels. Sensitive to output cadence and numerical noise. "),
             ]
             for name, label, title, explanation in diagnostics:
-                for camera in ("front", "back", "oblique"):
+                for camera in ("front", "back", "oblique", "reverse oblique"):
                     _pvvis_attempt(result, run_dir, f"{name}, {camera}", lambda: _pvvis_render(
                         source, result, settings, run_dir, view, title,
                         explanation + window + f"Frame: {metadata['frame']}; shown on geometry at t={metadata['reference_geometry_time_s']:.6g} s. These are diagnostics, not FW-H contributions or SPL.",
@@ -1287,46 +1305,248 @@ return velocity(data)
                     if cropped is not sliced:
                         pvs.Delete(cropped)
                     pvs.Delete(sliced)
-            if "U" in wanted:
-                def vortex_views():
-                    region = base
-                    point_data = pvs.CellDatatoPointData(Input=region)
-                    point_data.ProcessAllArrays = 0
-                    point_data.CellDataArraytoprocess = ["Q", "vorticity_magnitude"]
-                    contour = pvs.Contour(Input=point_data)
-                    contour.ContourBy = ["POINTS", "Q"]
-                    try:
-                        color_range = [math.inf, -math.inf]
-                        omega = settings["rpm"] * 2 * math.pi / 60
-                        # Scale to the actual displayed isosurfaces, not unrelated
-                        # high-gradient cells elsewhere in the volume crop.
-                        for sample_time, _ in selected:
-                            for normalized_q in settings["q_over_omega2"]:
-                                contour.Isosurfaces = [normalized_q * omega ** 2]
-                                contour.UpdatePipeline(sample_time)
-                                if contour.GetDataInformation().GetNumberOfCells():
-                                    lo, hi = contour.PointData.GetArray("vorticity_magnitude").GetRange()
-                                    color_range = [min(color_range[0], lo), max(color_range[1], hi)]
-                        color_range = _pvvis_limits(color_range, "volume_vorticity_magnitude", settings)
-                        for normalized_q in settings["q_over_omega2"]:
-                            threshold = normalized_q * omega ** 2
-                            contour.Isosurfaces = [threshold]
-                            contour.UpdatePipeline(t)
-                            for camera in ("oblique", "xy"):
-                                _pvvis_attempt(result, run_dir, f"Q={threshold:g}, {camera}, t={t:g}", lambda: _pvvis_render(
-                                    contour, result, settings, run_dir, view, f"Vortex structures - Q/omega^2 = {normalized_q:g}",
-                                    f"Q={threshold:.6g} s^-2, colored by vorticity magnitude. Vortices are extracted across the entire domain; camera fits the resulting geometry. Fixed Q/omega^2 thresholds expose threshold sensitivity; colors span the displayed isosurfaces and are fixed across phases and thresholds. Cells are interpolated to points for isosurfaces. Vortices are not acoustic source strength.",
-                                    camera=camera, field=("POINTS", "vorticity_magnitude", "Vorticity magnitude [1/s]"), limits=color_range, time_s=t))
-                    finally:
-                        pvs.Delete(contour)
-                        pvs.Delete(point_data)
-                _pvvis_attempt(result, run_dir, f"Vortex views t={t:g}", vortex_views)
+        if "U" in wanted:
+            _pvvis_attempt(result, run_dir, "Vortex atlas", lambda: _pvvis_vortices(
+                base, selected, result, settings, run_dir, view))
         _pvvis_attempt(result, run_dir, "Blade wall and section details", lambda: _pvvis_wall(
             marker, selected[-1][0], result, settings, run_dir, view, units, base=base))
     finally:
         for proxy in reversed(proxies):
             pvs.Delete(proxy)
         pvs.Delete(reader)
+
+
+def _pvvis_vortices(base, selected, result, settings, run_dir, view):
+    """Show threshold sensitivity and multiple projections at consistent scale."""
+    point_data = pvs.CellDatatoPointData(Input=base)
+    point_data.ProcessAllArrays = 0
+    point_data.CellDataArraytoprocess = ["Q", "vorticity_magnitude"]
+    contour = pvs.Contour(Input=point_data)
+    contour.ContourBy = ["POINTS", "Q"]
+    omega = settings["rpm"] * 2 * math.pi / 60
+    thresholds = [(q, q * omega ** 2) for q in settings["q_over_omega2"]]
+    try:
+        available = {}
+        extrema, bounds = [], []
+        for t, _ in selected:
+            for normalized_q, threshold in thresholds:
+                contour.Isosurfaces = [threshold]
+                contour.UpdatePipeline(t)
+                info = contour.GetDataInformation()
+                if not info.GetNumberOfCells():
+                    continue
+                available[t, normalized_q] = threshold
+                extrema.append(contour.PointData.GetArray("vorticity_magnitude").GetRange())
+                bounds.append(np.asarray(info.GetBounds()).reshape(3, 2))
+        if not available:
+            raise ValueError("No isosurfaces at the configured Q thresholds")
+        limits = _pvvis_limits([np.min(np.asarray(extrema)[:, 0]), np.max(np.asarray(extrema)[:, 1])],
+                              "volume_vorticity_magnitude", settings)
+        lower = np.min(np.asarray(bounds)[:, :, 0], axis=0)
+        upper = np.max(np.asarray(bounds)[:, :, 1], axis=0)
+        center = (lower + upper) / 2
+        span = float(np.linalg.norm(upper - lower))
+        latest = max(t for t, _ in available)
+        for (t, normalized_q), threshold in available.items():
+            contour.Isosurfaces = [threshold]
+            view.ViewTime = t
+            cameras = ("oblique", "xy")
+            if t == latest:
+                cameras += ("reverse oblique", "yz", "front", "back")
+            for camera in cameras:
+                _pvvis_attempt(result, run_dir, f"Q={threshold:g}, {camera}, t={t:g}", lambda: _pvvis_render(
+                    contour, result, settings, run_dir, view,
+                    f"Vortex structures - Q/omega^2 = {normalized_q:g}",
+                    f"Isosurface Q = {threshold:.6g} s^-2, colored by vorticity magnitude. "
+                    "The color scale and framing are shared across saved phases and thresholds. "
+                    "Cell values are interpolated to points before extracting the isosurface.",
+                    camera=camera, field=("POINTS", "vorticity_magnitude", "Vorticity magnitude [1/s]"),
+                    limits=limits, center=center, span=span, time_s=t))
+    finally:
+        pvs.Delete(contour)
+        pvs.Delete(point_data)
+
+
+def _pvvis_convergence_edges(points, triangles, vectors, minimum_length):
+    """Screen for connected edges approached by tangential shear from both faces."""
+    corners = points[triangles]
+    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    areas = np.linalg.norm(normals, axis=1)
+    normals /= np.maximum(areas[:, None], np.finfo(float).tiny)
+    shear = vectors - np.sum(vectors * normals, axis=1)[:, None] * normals
+    magnitude = np.linalg.norm(shear, axis=1)
+    finite = np.isfinite(magnitude) & (magnitude > 0) & (areas > 0)
+    if not finite.any():
+        return []
+    usable = finite & (magnitude >= 1e-4 * np.median(magnitude[finite]))
+    shear[~finite] = 0
+    shear /= np.where(finite, magnitude, 1.)[:, None]
+
+    edges = np.sort(triangles[:, [[0, 1], [1, 2], [2, 0]]], axis=2).reshape(-1, 2)
+    face_ids = np.repeat(np.arange(len(triangles)), 3)
+    order = np.lexsort((edges[:, 1], edges[:, 0]))
+    edges, face_ids = edges[order], face_ids[order]
+    unique, starts, counts = np.unique(edges, axis=0, return_index=True, return_counts=True)
+    paired = counts == 2
+    edges = unique[paired]
+    first, second = face_ids[starts[paired]], face_ids[starts[paired] + 1]
+    delta = points[edges[:, 1]] - points[edges[:, 0]]
+    lengths = np.linalg.norm(delta, axis=1)
+    direction = delta / np.maximum(lengths[:, None], np.finfo(float).tiny)
+    midpoint = (points[edges[:, 0]] + points[edges[:, 1]]) / 2
+    centers = corners.mean(axis=1)
+
+    def approach(faces):
+        inward = midpoint - centers[faces]
+        inward -= np.sum(inward * direction, axis=1)[:, None] * direction
+        inward /= np.maximum(np.linalg.norm(inward, axis=1)[:, None], np.finfo(float).tiny)
+        return np.sum(shear[faces] * inward, axis=1)
+
+    cutoff = math.sin(math.radians(10))
+    converging = (usable[first] & usable[second] & (lengths > 0)
+                  & (np.sum(normals[first] * normals[second], axis=1) > math.cos(math.radians(35)))
+                  & (approach(first) > cutoff) & (approach(second) > cutoff))
+    graph = {}
+    for index in np.flatnonzero(converging):
+        for vertex in edges[index]:
+            graph.setdefault(vertex, []).append(index)
+    pending = set(np.flatnonzero(converging))
+    retained = []
+    while pending:
+        seed = pending.pop()
+        component, stack = [seed], [seed]
+        while stack:
+            for vertex in edges[stack.pop()]:
+                for neighbor in graph[vertex]:
+                    if neighbor in pending:
+                        pending.remove(neighbor)
+                        component.append(neighbor)
+                        stack.append(neighbor)
+        if len(component) >= 3 and lengths[component].sum() >= minimum_length:
+            retained.extend(component)
+    return edges[sorted(retained)].tolist()
+
+
+def _pvvis_shear_topology(wall, t, result, settings, run_dir, view, shear_label, limits):
+    """Archive the surface trajectories and conservative candidate line segments."""
+    from vtkmodules.util.numpy_support import vtk_to_numpy, numpy_to_vtk
+    from vtkmodules.vtkCommonCore import vtkPoints
+    from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkDataObject, vtkPolyData
+    from vtkmodules.vtkFiltersCore import vtkCellDataToPointData, vtkCleanPolyData, vtkTriangleFilter
+    from vtkmodules.vtkFiltersFlowPaths import vtkStreamTracer
+    from vtkmodules.vtkFiltersGeometry import vtkCompositeDataGeometryFilter
+    from vtkmodules.vtkIOXML import vtkXMLPolyDataWriter
+
+    extracted = pvs.ExtractSurface(Input=wall)
+    try:
+        extracted.UpdatePipeline(t)
+        data = servermanager.Fetch(extracted)
+    finally:
+        pvs.Delete(extracted)
+    if not data.IsA("vtkPolyData"):
+        geometry = vtkCompositeDataGeometryFilter()
+        geometry.SetInputData(data)
+        geometry.Update()
+        data = geometry.GetOutput()
+    clean = vtkCleanPolyData()
+    clean.SetInputData(data)
+    triangulate = vtkTriangleFilter()
+    triangulate.SetInputConnection(clean.GetOutputPort())
+    triangulate.PassLinesOff()
+    triangulate.PassVertsOff()
+    triangulate.Update()
+    surface = triangulate.GetOutput()
+    wall_array = surface.GetCellData().GetArray("wallShearStress")
+    if wall_array is None or wall_array.GetNumberOfComponents() != 3 or surface.GetNumberOfPolys() == 0:
+        raise ValueError("The reconstructed propeller patch has no wall-shear vector field")
+    points = vtk_to_numpy(surface.GetPoints().GetData()).astype(float)
+    triangles = vtk_to_numpy(surface.GetPolys().GetConnectivityArray()).reshape(-1, 3)
+    shear = settings["skin_friction_sign"] * vtk_to_numpy(wall_array).astype(float)
+    if not np.isfinite(shear).all():
+        raise ValueError("The wall-shear field contains nonfinite vectors")
+    signed = numpy_to_vtk(shear, deep=True)
+    signed.SetName("SkinFrictionDirection")
+    surface.GetCellData().AddArray(signed)
+    diameter = settings["diameter_m"] or float(np.ptp(points, axis=0).max())
+    segments = _pvvis_convergence_edges(points, triangles, shear, .01 * diameter)
+
+    interpolated = vtkCellDataToPointData()
+    interpolated.SetInputData(surface)
+    centers = points[triangles].mean(axis=1)
+    corners = points[triangles]
+    weights = np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+    eligible = np.flatnonzero((weights > 0) & (np.linalg.norm(shear, axis=1) > 0))
+    if not len(eligible):
+        raise ValueError("No nonzero wall-shear vectors on usable propeller faces")
+    rng = np.random.default_rng(0)
+    selected = rng.choice(eligible, min(160, len(eligible)), replace=False,
+                          p=weights[eligible] / weights[eligible].sum())
+    seed_points = vtkPoints()
+    seed_points.SetData(numpy_to_vtk(centers[selected], deep=True))
+    seeds = vtkPolyData()
+    seeds.SetPoints(seed_points)
+    tracer = vtkStreamTracer()
+    tracer.SetInputConnection(interpolated.GetOutputPort())
+    tracer.SetSourceData(seeds)
+    tracer.SetInputArrayToProcess(0, 0, 0, vtkDataObject.FIELD_ASSOCIATION_POINTS, "SkinFrictionDirection")
+    tracer.SetSurfaceStreamlines(True)
+    tracer.SetIntegrationDirectionToBoth()
+    tracer.SetIntegratorTypeToRungeKutta45()
+    tracer.SetMaximumPropagation(.35 * diameter)
+    tracer.SetMaximumNumberOfSteps(350)
+    tracer.Update()
+    trajectories = tracer.GetOutput()
+
+    candidates = vtkPolyData()
+    candidates.SetPoints(surface.GetPoints())
+    lines = vtkCellArray()
+    for a, b in segments:
+        lines.InsertNextCell(2)
+        lines.InsertCellPoint(a)
+        lines.InsertCellPoint(b)
+    candidates.SetLines(lines)
+    overlays, proxies = [], []
+    for name, dataset, color, width in (
+        ("skin-friction-lines", trajectories, (.15, .19, .24), 1.25),
+        ("candidate-separation-lines", candidates, (.98, .31, .09), 3.2),
+    ):
+        if dataset.GetNumberOfLines():
+            path = run_dir / (name + ".vtp")
+            writer = vtkXMLPolyDataWriter()
+            writer.SetFileName(str(path))
+            writer.SetInputData(dataset)
+            if not writer.Write():
+                raise OSError(f"Failed to archive {name}")
+            proxy = pvs.XMLPolyDataReader(FileName=[str(path)])
+            proxies.append(proxy)
+            overlays.append((proxy, color, width))
+    if not trajectories.GetNumberOfLines():
+        result["warnings"].append("No skin-friction trajectories could be integrated from the saved wall-shear snapshot")
+    result["wall_shear_topology"] = {
+        "time_s": float(t), "wall_shear_multiplier": settings["skin_friction_sign"],
+        "trajectory_count": trajectories.GetNumberOfLines(), "candidate_edge_count": len(segments),
+        "minimum_chain_length_m": .01 * diameter,
+        "method": "Converging tangential wall shear across neighboring surface faces",
+        "min_approach_angle_deg": 10, "max_face_normal_angle_deg": 35, "min_edges": 3,
+    }
+    caption = (
+        "Dark lines trace the interpolated tangential wall shear at this instant. "
+        "Orange segments flag connected mesh edges approached by shear on both adjacent faces. "
+        "These are separation candidates. Check surface-flow topology and nearby blade-relative sections before interpretation."
+        if segments else
+        "Dark lines trace the interpolated tangential wall shear at this instant. No connected candidate met the edge-convergence screen."
+    )
+    try:
+        for camera in ("front", "back", "oblique", "reverse oblique"):
+            _pvvis_attempt(result, run_dir, f"Skin friction topology, {camera}", lambda: _pvvis_render(
+                wall, result, settings, run_dir, view, f"Blade skin-friction topology ({camera})",
+                caption, camera=camera, field=("CELLS", "wallShearStress", shear_label), limits=limits,
+                time_s=t, overlays=overlays))
+    finally:
+        for proxy in reversed(proxies):
+            pvs.Delete(proxy)
+
+
 
 
 def _pvvis_wall(marker, t, result, settings, run_dir, view, units, base=None):
@@ -1353,12 +1573,15 @@ def _pvvis_wall(marker, t, result, settings, run_dir, view, units, base=None):
         else:
             result["warnings"].append("wallShearStress unavailable; blade shear maps omitted")
         for name, label in wall_fields:
-            for camera in ("front", "back", "oblique"):
+            for camera in ("front", "back", "oblique", "reverse oblique"):
                 _pvvis_attempt(result, run_dir, f"Blade {name}, {camera}", lambda: _pvvis_render(
                     wall, result, settings, run_dir, view, f"Blade wall - {name} ({camera})",
                     "Inspect local loading or wall-treatment coverage, especially blade tips and roots. Colors show native patch cell values; no surface smoothing is applied. Assess y+ against the chosen turbulence model and wall treatment.",
                     camera=camera, field=("CELLS", name, label), time_s=t))
-        for camera in (("front", "back", "oblique") if mesh_only else ()):
+        if not mesh_only and "wallShearStress" in wall.CellArrays.Available:
+            _pvvis_attempt(result, run_dir, "Blade skin-friction topology", lambda: _pvvis_shear_topology(
+                wall, t, result, settings, run_dir, view, f"Wall shear magnitude [{shear_unit}]", None))
+        for camera in (("front", "back", "oblique", "reverse oblique") if mesh_only else ()):
             _pvvis_render(wall, result, settings, run_dir, view, f"Blade surface mesh ({camera})",
                           "Inspect blade surface panel density near edges, root and tip. This surface view cannot measure wall-normal cell thickness; consult mesh sections and checkMesh results.",
                           camera=camera, time_s=t, edges=True)

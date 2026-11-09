@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from .layer_thickness import _read_list
-from .plotting import pyplot as plt
+from .plotting import pyplot as plt, save_figure
 
 
 def measure_cell_volumes(mesh, mesh_files=None):
@@ -98,6 +98,8 @@ def create_volume_report_data(case_path):
     image, csv = report / 'mesh_volume_distribution.png', report / 'mesh_cell_volumes.csv'
     for path in (image, csv):
         path.unlink(missing_ok=True)
+        if path.suffix == ".png":
+            path.with_suffix(".pdf").unlink(missing_ok=True)
     result = dict(status='unavailable', image=None,
                   scope='Assembled initial mesh: constant/polyMesh; all cells.')
     try:
@@ -115,22 +117,22 @@ def create_volume_report_data(case_path):
         weights, _ = np.histogram(positive, edges, weights=positive)
         fig, axes = plt.subplots(2, 1, figsize=(8, 5.5), sharex=True)
         try:
-            axes[0].stairs(100 * counts / len(volumes), edges, fill=True, color='#4a8195', label='Share of all cells')
-            axes[0].stairs(100 * weights / positive.sum(), edges, color='#d8822b', linewidth=1.5, label='Share of positive mesh volume')
-            axes[0].set_ylabel('Share per bin [%]')
+            axes[0].stairs(100 * counts / len(volumes), edges, fill=True, color='#176287', label='Share of all cells')
+            axes[0].stairs(100 * weights / positive.sum(), edges, color='#BB572B', linewidth=1.5, label='Share of positive mesh volume')
+            axes[0].set(title='(a) Cell count and occupied volume', ylabel='Share per bin [%]')
             axes[0].legend(fontsize=8)
             # Downsample only the plotted CDF, retaining endpoints and tail detail.
             indices = np.unique(np.r_[0, np.geomspace(1, len(positive), min(2000, len(positive))).astype(int)-1, len(positive)-1])
             axes[1].step(np.r_[lo, positive[indices], hi],
                          np.r_[0, 100 * (indices+1) / len(volumes), 100 * len(positive) / len(volumes)],
-                         where='post', color='#4a8195')
-            axes[1].set(xlabel='Cell volume [m³] (logarithmic scale)', ylabel='Cumulative cell share [%]', ylim=(0, 101))
+                         where='post', color='#176287')
+            axes[1].set(title='(b) Cumulative cell count', xlabel='Cell volume [m³]', ylabel='Cumulative cell share [%]', ylim=(0, 101))
             for ax in axes:
                 ax.set_xscale('log')
                 ax.set_xlim(lo, hi)
                 ax.grid(alpha=.25)
             fig.tight_layout()
-            fig.savefig(image, dpi=180)
+            save_figure(fig, image)
         finally:
             plt.close(fig)
         np.savetxt(csv, volumes, delimiter=',', header='cell_volume_m3', comments='')

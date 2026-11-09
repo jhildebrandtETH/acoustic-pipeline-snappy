@@ -156,7 +156,8 @@ class VisualizationTests(unittest.TestCase):
             self.assertEqual(manifest['mesh_summary']['cells'], 736)
             report = create_simulation_report(root, 4000, 'AMI', 'kOmegaSST', mesh_only=True, quiet=True)
             pdf = PdfReader(report['output_pdf'])
-            self.assertEqual(sum(len(page.images) for page in pdf.pages), len(manifest['views']) + 1)
+            atlas_pages = [page for page in pdf.pages if 'Visual atlas | Page' in page.extract_text()]
+            self.assertEqual(sum(len(page.images) for page in atlas_pages), len(manifest['views']))
             text = '\n'.join(page.extract_text() for page in pdf.pages)
             self.assertIn('Mesh - Geometry, Refinement and Near-Wall Cells', text)
             self.assertNotIn('Flow and Blade-Wall Diagnostics', text)
@@ -259,6 +260,33 @@ class VisualizationTests(unittest.TestCase):
         selected = visualization.select_report_views(views, 2)
         self.assertEqual(len(selected), 4)
         self.assertTrue(all('full domain' in v['title'] and v['time_s'] == 2 for v in selected))
+
+    def test_wall_shear_screen_distinguishes_convergence_from_divergence(self):
+        import numpy as np
+
+        points = np.array([(x, 0., z) for z in range(6) for x in range(-1, 2)])
+        triangles = []
+        for row in range(5):
+            for column in range(2):
+                a = 3 * row + column
+                triangles.extend(((a, a + 1, a + 3), (a + 1, a + 4, a + 3)))
+        triangles = np.array(triangles)
+        centers = points[triangles].mean(axis=1)
+        shear = np.column_stack((-centers[:, 0], np.zeros(len(centers)), np.full(len(centers), .2)))
+        edges = visualization._pvvis_convergence_edges(points, triangles, shear, 2.)
+        self.assertEqual(edges, [[1, 4], [4, 7], [7, 10], [10, 13], [13, 16]])
+        self.assertEqual(visualization._pvvis_convergence_edges(points, triangles, -shear, 2.), [])
+
+    def test_atlas_keeps_latest_primary_q_angles_and_wall_topology(self):
+        views = [
+            dict(title=title, camera=camera, time_s=time)
+            for time in (1., 2.)
+            for title in ("Vortex structures - Q/omega^2 = 0.1", "Blade skin-friction topology")
+            for camera in ("oblique", "xy", "back")
+        ]
+        selected = visualization.select_report_views(views, maximum=2)
+        self.assertEqual(len(selected), 6)
+        self.assertTrue(all(view["time_s"] == 2. for view in selected))
 
     def test_report_selection_keeps_distinct_quantities_and_latest_time(self):
         views = [{'title': f'Flow slice - {field} ({station})', 'time_s': t}

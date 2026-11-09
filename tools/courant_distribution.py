@@ -8,7 +8,7 @@ import numpy as np
 from diagnoseCourant import read_ascii_internal
 from .layer_thickness import _read_list
 from .mesh_volumes import measure_cell_volumes
-from .plotting import pyplot as plt
+from .plotting import pyplot as plt, save_figure
 
 
 def _times(root):
@@ -47,6 +47,8 @@ def create_courant_report_data(case_path, target=None):
     volume_csv = report / 'highest_courant_cell_volumes.csv'
     for path in (image, csv, volume_image, volume_csv):
         path.unlink(missing_ok=True)
+        if path.suffix == ".png":
+            path.with_suffix(".pdf").unlink(missing_ok=True)
     result = dict(status='unavailable', image=None,
                   scope='Latest saved reconstructed time; all internal cells, counted equally.')
     try:
@@ -93,22 +95,26 @@ def create_courant_report_data(case_path, target=None):
         hi = max(float(co.max()), linear) * 1.05
         edges = np.unique(np.r_[0, np.geomspace(linear, hi, 41)])
         counts, _ = np.histogram(co, edges)
-        fig, axes = plt.subplots(2, 1, figsize=(8, 3.4), sharex=True)
+        fig, axes = plt.subplots(2, 1, figsize=(8, 4.6), sharex=True)
         try:
-            axes[0].stairs(100 * counts / len(co), edges, fill=True, color='#4a8195')
-            axes[0].set_ylabel('Cell share [%]')
+            axes[0].stairs(100 * counts / len(co), edges, fill=True, color='#176287')
+            axes[0].set(title='(a) Cell Courant distribution', ylabel='Cell share [%]')
             # Exact exceedance at every bin edge, retaining the maximum endpoint.
             x = np.unique(np.r_[edges, co.max()])
             exceed = len(co) - np.searchsorted(np.sort(co), x, side='right')
-            axes[1].plot(x, 100 * exceed / len(co), color='#4a8195', marker='.', markersize=3)
-            axes[1].set(xlabel='Cell Courant number [-] (log scale; linear near zero)',
+            axes[1].plot(x, 100 * exceed / len(co), color='#176287', marker='.', markersize=3)
+            axes[1].set(title='(b) Exceedance', xlabel='Cell Courant number [-] (symmetric log)',
                         ylabel='Above value [%]', ylim=(0, 101))
             for ax in axes:
                 ax.set_xscale('symlog', linthresh=linear)
                 ax.set_xlim(0, hi)
-                ax.grid(alpha=.25)
+                ax.grid(axis='y')
+                if target is not None and 0 < target <= hi:
+                    ax.axvline(target, color='#BB572B', ls='--', lw=1)
+            if target is not None and 0 < target <= hi:
+                axes[0].set_title(f'Configured limit {target:g}', loc='right', fontsize=9)
             fig.tight_layout()
-            fig.savefig(image, dpi=180)
+            save_figure(fig, image)
         finally:
             plt.close(fig)
         np.savetxt(csv, co, delimiter=',', header='cell_courant_number', comments='')
@@ -143,8 +149,8 @@ def create_highest_courant_volume_plot(co, volumes, image, csv):
     fig, ax = plt.subplots(figsize=(8, 2.5))
     try:
         ax.stairs(100 * all_counts / len(volumes), edges, fill=True, alpha=.3,
-                  color='#4a8195', label='All mesh cells')
-        ax.stairs(100 * top_counts / len(ids), edges, color='#d8822b', linewidth=1.8,
+                  color='#176287', label='All mesh cells')
+        ax.stairs(100 * top_counts / len(ids), edges, color='#BB572B', linewidth=1.8,
                   label=f'Highest {len(ids):,} Courant cells')
         ax.set(xscale='log', xlim=(lo, hi), ylabel='Cells per bin [%]',
                xlabel='Cell volume [m³]: smaller / finer  ←  →  larger / coarser',
@@ -152,7 +158,7 @@ def create_highest_courant_volume_plot(co, volumes, image, csv):
         ax.legend(fontsize=8)
         ax.grid(alpha=.2)
         fig.tight_layout()
-        fig.savefig(image, dpi=180)
+        save_figure(fig, image)
     finally:
         plt.close(fig)
     np.savetxt(csv, np.column_stack((ids, co[ids], selected)), delimiter=',',

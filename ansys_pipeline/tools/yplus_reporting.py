@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import gzip
 import numpy as np
-from .plotting import pyplot as plt
+from .plotting import pyplot as plt, save_figure
 
 def existing(path):
     return path if path.is_file() else path.with_name(path.name + '.gz')
@@ -144,6 +144,7 @@ def create_yplus_report(case_path, report_dir, patch_name):
     report.mkdir(parents=True, exist_ok=True)
     image = report / 'yplus_distribution.png'
     image.unlink(missing_ok=True)
+    image.with_suffix(".pdf").unlink(missing_ok=True)
     result = dict(status='unavailable', patch_name=patch_name, primary_weighting='surface_area',
                   average_yplus=None, median_yplus=None,
                   scope='One latest reconstructed snapshot; entire named patch, including hub if merged.',
@@ -206,25 +207,27 @@ def create_yplus_report(case_path, report_dir, patch_name):
             result['area_unavailable_reason'] = str(exc)
         labels = ['<5', '5-30', '>30-50', '>50-100', '>100-200', '>200']
         x = np.arange(len(labels))
-        fig, ax = plt.subplots(figsize=(7.4, 4.0))
+        fig, ax = plt.subplots(figsize=(8.2, 4.1), layout="constrained")
         try:
             if 'area_weighted' in result:
                 ax.bar(x-.19, result['area_weighted']['histogram_percent'], .38,
-                       color='#357d91', label='Surface area (primary)')
-                ax.bar(x+.19, face['histogram_percent'], .38, color='#babfc4', label='Face count (diagnostic)')
+                       color='#176287', label='Surface area (primary)')
+                ax.bar(x+.19, face['histogram_percent'], .38, color='#AAB9C4', label='Face count (diagnostic)')
                 ax.set_ylabel('Share [%]')
             else:
-                ax.bar(x, face['histogram_percent'], .65, color='#babfc4', label='Face count only; areas unavailable')
+                ax.bar(x, face['histogram_percent'], .65, color='#AAB9C4', label='Face count only; areas unavailable')
                 ax.set_ylabel('Face share [%]')
+            for bars in ax.containers:
+                ax.bar_label(bars, labels=[f'{bar.get_height():.1f}' if bar.get_height() >= 1 else ''
+                                           for bar in bars], padding=3, fontsize=8)
             ax.set_xticks(x, labels)
-            ax.set_xlabel('y+ interval (upper endpoints included)')
-            ax.set_title('Wall y+ coverage - ' + patch_name)
+            ax.set_xlabel(r'Wall coordinate, $y^+$ [-]')
+            ax.set_title('Near-wall resolution | ' + patch_name)
             ax.legend(fontsize=8)
             ax.set_ylim(0, 105)
             ax.grid(axis='y', alpha=.25)
             ax.set_axisbelow(True)
-            fig.tight_layout()
-            fig.savefig(image, dpi=200)
+            save_figure(fig, image)
         finally:
             plt.close(fig)
     except (OSError, ValueError, UnicodeError, IndexError) as exc:

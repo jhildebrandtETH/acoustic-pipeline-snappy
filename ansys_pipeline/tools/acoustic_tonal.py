@@ -102,7 +102,7 @@ def write_tonal_figures(report, groups, metadata, config, low, high):
     The union plotting grid retains every integration knot across repeat grids.
     """
     from tools.acoustic_comparison import integrate_density, levels
-    from tools.plotting import pyplot as plt
+    from tools.plotting import pyplot as plt, save_figure
     from tools import MATPLOTLIB_LOCK
 
     settings = tonal_settings(config)
@@ -153,7 +153,7 @@ def write_tonal_figures(report, groups, metadata, config, low, high):
             fig.text(.10, .91, f"{metadata['geometry']} | {metadata['rpm']:g} RPM | "
                      f"microphone {metadata['microphone_channel']} | {len(spectra)} recording(s)")
             ax.set(xscale='log', xlim=(low, high), xlabel='Frequency [Hz]',
-                   ylabel='PSD [dB re (20 µPa)²/Hz]', facecolor='#f0f0f0')
+                   ylabel='PSD [dB re (20 µPa)²/Hz]', facecolor='white')
             ax.plot(grid, levels(background, floor), color='#247eaf', lw=2.5, label='Estimated broadband PSD')
             ax.plot(grid, levels(original, floor), color='#202020', ls=':', lw=1.1,
                     label='Total simulated PSD' if kind == 'simulated' else 'Total experimental PSD')
@@ -185,7 +185,7 @@ def write_tonal_figures(report, groups, metadata, config, low, high):
                                                   if not metadata.get('positions_match', True) else '')
             if note:
                 fig.text(.10, .02, note, fontsize=8, color='#a22b2b', wrap=True)
-            fig.savefig(report / f'acoustic-tonal-{kind}.png', dpi=160)
+            save_figure(fig, report / f'acoustic-tonal-{kind}.png')
             plt.close(fig)
     (report / 'acoustic-tonal.json').write_text(json.dumps(summary, indent=2, allow_nan=False), encoding='utf-8')
     return summary

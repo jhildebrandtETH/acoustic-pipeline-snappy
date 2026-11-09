@@ -2,8 +2,9 @@
 
 Edit `directivity` in each case's `Parameters/acousticComparison.json`. Repository
 settings seed new cases only. The repository configuration enables multi-observer
-comparison with a zero centre and identity rotation. Verify these against your
-measurement coordinates before running; no centre or orientation is fitted.
+comparison with the recorded APC array centre `[0, 0, 0.75]` m and identity
+rotation. The CFD rotor centre stays at `[0, 0, 0]` m. Verify these settings
+against the measurement coordinates when using another array.
 
 ## Coordinate settings
 
@@ -29,11 +30,11 @@ directivity is disabled; its existing coordinate assumptions still apply.
 
 ## Plane settings
 
-The default `elevation_planes` select measured microphones in the simulation XY
-and ZY planes. Both contain the simulation Y shaft and are perpendicular to the
-rotor's XZ plane. The previous XZ microphone group sampled the rotor plane and
-is no longer the default. Selection uses recorded coordinates and the configured
-frame transformation, not microphone IDs inferred from a drawing.
+The default XZ rotor-plane azimuth plot uses microphones M6, M10, M8 and
+M1. Angles increase from +X toward +Z. The APC array has no three microphones
+in a common Y-shaft plane at the configured 5 mm tolerance. For other arrays,
+optional `elevation_planes` select measured microphones in shaft-containing
+planes using the recorded positions and the configured coordinate mapping.
 
 Each entry has a `name` and `radial_direction_simulation`, a nonzero direction
 perpendicular to the Y shaft. For example:
@@ -54,12 +55,11 @@ in JSON `omitted_planes`; if none remain and no manual planes exist, directivity
 is explicitly unavailable. Off-plane microphones are never projected onto a plane.
 The 1.88 m radius in the schematic is not imposed on measured coordinates.
 
-For existing cases, copy `elevation_planes` into the case-local configuration and
-set `planes` to `[]` to replace the old rotor-plane view. Rebuild using
-`python -m tools.acoustic_comparison "path/to/case"`. A valid all-channel cache
-already contains elevated observers, so no new propagation is needed unless the
-coordinate mapping changes or the cache lacks those channels. This produces
-sampled elevation directivity, not an invented continuous observer sweep.
+For existing APC cases, update `experimental_rotation_center_m` and
+`planes` in the case-local configuration from the repository defaults. A
+change to the experimental centre requires a fresh FW-H propagation with the
+saved source surfaces. Plane-only changes can reuse a cache with matching
+observer coordinates.
 
 Add further entries to `planes`, each with `name`, `channels`, `zero_direction`
 and `positive_direction`. Direction vectors must be nonzero and perpendicular.
@@ -96,6 +96,14 @@ Polar totals use the common positive-frequency coverage across every observer
 and experimental recording. Experimental repeats are averaged in linear energy.
 Total SPL is integrated before conversion to dB; tonal plus broadband power equals
 overall power. Exact zero energy is null, rather than a fabricated finite level.
+
+The matched microphone comparison uses every cached channel, independently
+of the available polar planes. It shows overall SPL, estimated broadband SPL
+and the first two BPF bands. Each band is centred at its expected harmonic and
+extends two FFT bins either side, capped at one quarter of the fundamental BPF.
+Bands outside the common spectral coverage are omitted. The measurements use
+an energy mean and show the repeat range. Figure PNG/PDF and the per-channel
+values and signed differences are exported as `acoustic-microphone-comparison.*`.
 
 New outputs: `acoustic-directivity-plane-1.png` (and subsequent planes),
 `acoustic-directivity.csv`, and `acoustic-directivity.json`. Figures are included

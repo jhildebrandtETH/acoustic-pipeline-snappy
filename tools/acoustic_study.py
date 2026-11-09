@@ -143,7 +143,7 @@ def prepare_view(case, item, source):
 def compare_cached(entries, output, rpm):
     """Compare the same fully-arrived observer interval for every diameter."""
     import numpy as np
-    from tools.plotting import pyplot as plt
+    from tools.plotting import pyplot as plt, save_figure
     output = Path(output)
     traces = []
     for entry in entries:
@@ -180,7 +180,7 @@ def compare_cached(entries, output, rpm):
     ax.set(xlabel='Frequency [Hz]', ylabel='SPL per FFT bin [dB re 20 µPa]', title='Acoustic sphere diameter comparison')
     ax.grid(True, alpha=.3)
     ax.legend(ncol=3, fontsize=8)
-    fig.savefig(output/'sphere-comparison.png', dpi=160)
+    save_figure(fig, output/'sphere-comparison.png')
     plt.close(fig)
     np.savez_compressed(output/'sphere-comparison.npz', frequencies_hz=frequencies, **spectra)
     result = dict(status='complete', observer_m=observer.tolist(), common_start_s=float(grid[0]),
@@ -241,7 +241,7 @@ def run_study(case, rpm, mode, turbulence, *, source='recorded', factors=None,
     entries = []
     output = case/'acoustic-study'/source
     output.mkdir(parents=True, exist_ok=True)
-    for name in ('sphere-comparison.png', 'sphere-comparison.npz', 'sphere-comparison.csv'):
+    for name in ('sphere-comparison.png', 'sphere-comparison.pdf', 'sphere-comparison.npz', 'sphere-comparison.csv'):
         (output/name).unlink(missing_ok=True)
     (output/'sphere-comparison.json').write_text(json.dumps(dict(status='running')))
     (output/'study.json').write_text(json.dumps(dict(source=source, surfaces=[])))
@@ -266,7 +266,8 @@ def run_study(case, rpm, mode, turbulence, *, source='recorded', factors=None,
         metadata = json.loads(metadata_path.read_text())
         metadata.update(sample_interval_override_s=interval, time_selection=time_selection)
         metadata_path.write_text(json.dumps(metadata, indent=2))
-        for image in list((view/'report').glob('acoustic-*.png')) + [view/'report/spl_spectrum.png']:
+        for image in ([image for suffix in ('png', 'pdf') for image in (view/'report').glob(f'acoustic-*.{suffix}')] +
+                [view/'report'/f'spl_spectrum.{suffix}' for suffix in ('png', 'pdf')]):
             image.unlink(missing_ok=True)
         run_acoustic_solver('permeable', view, rpm, STATUS_CALLBACK=status_callback,
                             SURFACE_SERIES=series, RESPONSE_DELAY_S=None, SAMPLE_INTERVAL_S=interval)

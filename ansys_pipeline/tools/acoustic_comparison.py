@@ -311,10 +311,10 @@ def create_comparison(case_path, config=None):
 
 
 def plot_comparison(report, edges, simulated, measured, repeats, metadata):
-    from tools.plotting import pyplot as plt
+    from tools.plotting import pyplot as plt, save_figure
     from tools import MATPLOTLIB_LOCK
     from tools.acoustic_annotations import add_bpf_markers
-    blue, orange = '#2463a6', '#db7525'
+    blue, orange = '#2463a6', '#BB572B'
     extend = lambda values: np.r_[values, values[-1]]
     ymin = min(simulated.min(), repeats.min()) - 5
     ymax = max(simulated.max(), repeats.max()) + 5
@@ -358,7 +358,23 @@ def plot_comparison(report, edges, simulated, measured, repeats, metadata):
                 fig.text(.09, .012, metadata['source_note'], fontsize=9, color='#a22b2b')
             elif not metadata['positions_match']:
                 fig.text(.09, .012, 'PROVISIONAL: observer and microphone positions differ.', fontsize=9, color='#a22b2b')
-            fig.savefig(report / f'acoustic-{kind}.png', dpi=160)
+            save_figure(fig, report / f'acoustic-{kind}.png')
+            plt.close(fig)
+        difference = simulated - measured
+        fig, ax = plt.subplots(figsize=(9, 4.2), layout='constrained')
+        try:
+            ax.axhline(0, color='#415669', lw=.9)
+            ax.stairs(np.maximum(difference, 0), edges, fill=True,
+                      color=orange, alpha=.65, label='Simulation louder')
+            ax.stairs(np.minimum(difference, 0), edges, fill=True,
+                      color=blue, alpha=.65, label='Simulation quieter')
+            ax.set(xscale='log', xlim=(edges[0], edges[-1]), xlabel='Frequency [Hz]',
+                   ylabel='Simulation minus experiment [dB]', title='Signed narrow-band SPL difference')
+            ax.grid(axis='y')
+            add_bpf_markers(ax, metadata['rpm'], metadata.get('blade_count', 2))
+            ax.legend(loc='best', ncol=2)
+            save_figure(fig, report / 'acoustic-signed-error.png')
+        finally:
             plt.close(fig)
 
 

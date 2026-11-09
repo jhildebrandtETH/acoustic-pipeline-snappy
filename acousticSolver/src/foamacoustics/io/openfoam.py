@@ -9,6 +9,7 @@ import re
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Iterator, Literal
 
@@ -53,6 +54,67 @@ class _PointDataMapping:
     point_indices: torch.Tensor
     cell_indices: torch.Tensor
     vertex_counts: torch.Tensor
+
+
+def _polygon_keys(polygons: torch.Tensor, point_ids: list[int]) -> Iterator[tuple[int, ...]]:
+    entries = polygons.tolist()
+    cursor = 0
+    while cursor < len(entries):
+        size = entries[cursor]
+        indices = entries[cursor + 1 : cursor + 1 + size]
+        if size < 3 or len(indices) != size or any(
+            index < 0 or index >= len(point_ids) for index in indices
+        ):
+            raise ValueError("Invalid polygon connectivity.")
+        vertices = tuple(point_ids[index] for index in indices)
+        if len(set(vertices)) != size:
+            raise ValueError("A polygon repeats a vertex.")
+        start = vertices.index(min(vertices))
+        # A cyclic shift is the same face. Reversed winding is a different face.
+        yield vertices[start:] + vertices[:start]
+        cursor += 1 + size
+
+
+@dataclass(frozen=True)
+class _SurfaceOrdering:
+    points: torch.Tensor
+    polygons: torch.Tensor
+
+    @cached_property
+    def point_ids(self) -> dict[tuple[float, ...], int]:
+        ids = {tuple(point): index for index, point in enumerate(self.points.tolist())}
+        if len(ids) != len(self.points):
+            raise ValueError("Duplicate reference point coordinates make reordering ambiguous.")
+        return ids
+
+    @cached_property
+    def face_keys(self) -> tuple[tuple[int, ...], ...]:
+        keys = tuple(_polygon_keys(self.polygons, list(range(len(self.points)))))
+        if len(set(keys)) != len(keys):
+            raise ValueError("Duplicate reference faces make reordering ambiguous.")
+        return keys
+
+    def field_order(
+        self, points: torch.Tensor, polygons: torch.Tensor, location: Literal["cell", "point"]
+    ) -> torch.Tensor:
+        point_ids = [self.point_ids.get(tuple(point), -1) for point in points.tolist()]
+        if (
+            len(point_ids) != len(self.point_ids)
+            or -1 in point_ids
+            or len(set(point_ids)) != len(point_ids)
+        ):
+            raise ValueError("Point coordinates differ from the first VTK frame.")
+        keys = list(_polygon_keys(polygons, point_ids))
+        face_rows = {key: index for index, key in enumerate(keys)}
+        if len(keys) != len(self.face_keys) or face_rows.keys() != set(self.face_keys):
+            raise ValueError("Face connectivity or winding differs from the first VTK frame.")
+        if location == "point":
+            rows = [0] * len(point_ids)
+            for current_row, reference_row in enumerate(point_ids):
+                rows[reference_row] = current_row
+        else:
+            rows = [face_rows[key] for key in self.face_keys]
+        return torch.tensor(rows, dtype=torch.int64)
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +425,7 @@ def _read_surface_vtk_once(
     include_geometry: bool,
     field_dtype: torch.dtype,
     point_data_mapping: _PointDataMapping | None,
+    reference_ordering: _SurfaceOrdering | None,
 ) -> _ParsedSurfaceVTK:
     text = Path(path).read_bytes()
     points_match = _required_match(POINTS_RE, text, "POINTS", path)
@@ -382,14 +445,10 @@ def _read_surface_vtk_once(
     )
     data_start = min(section[3] for section in sections)
     fingerprint = _geometry_fingerprint(text, points_match, data_start)
-    if (
+    geometry_changed = (
         expected_geometry_fingerprint is not None
         and fingerprint != expected_geometry_fingerprint
-    ):
-        raise ValueError(
-            f"{path}: surface geometry, polygon order, or topology differs from "
-            "the first VTK frame."
-        )
+    )
 
     location, pressure, fluid_velocity = _read_surface_fields(
         sections,
@@ -400,7 +459,7 @@ def _read_surface_vtk_once(
     )
     points: torch.Tensor | None = None
     polygons: torch.Tensor | None = None
-    if include_geometry or (location == "point" and point_data_mapping is None):
+    if geometry_changed or include_geometry or (location == "point" and point_data_mapping is None):
         points, polygons = _parse_geometry(
             text,
             path=path,
@@ -408,6 +467,16 @@ def _read_surface_vtk_once(
             polygons_match=polygons_match,
             data_start=data_start,
         )
+    if geometry_changed:
+        assert reference_ordering is not None and points is not None and polygons is not None
+        try:
+            order = reference_ordering.field_order(points, polygons, location)
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from error
+        pressure = pressure.index_select(0, order)
+        if fluid_velocity is not None:
+            fluid_velocity = fluid_velocity.index_select(0, order)
+        points, polygons = reference_ordering.points, reference_ordering.polygons
     if location == "point":
         mapping = point_data_mapping
         if mapping is None:
@@ -443,6 +512,7 @@ def _read_surface_vtk(
     include_geometry: bool,
     field_dtype: torch.dtype,
     point_data_mapping: _PointDataMapping | None = None,
+    reference_ordering: _SurfaceOrdering | None = None,
     read_attempts: int = VTK_READ_ATTEMPTS,
 ) -> _ParsedSurfaceVTK:
     read_attempts = positive_int(read_attempts, "read_attempts")
@@ -457,6 +527,7 @@ def _read_surface_vtk(
                 include_geometry=include_geometry,
                 field_dtype=field_dtype,
                 point_data_mapping=point_data_mapping,
+                reference_ordering=reference_ordering,
             )
         except (OSError, VTKSectionError):
             if attempt + 1 == read_attempts:
@@ -540,10 +611,9 @@ def _surface_geometry(
 class OpenFOAMSurfaceSeries:
     """Ordered, bounded-memory reader for an OpenFOAM VTK surface series.
 
-    Static geometry is parsed once. Each iteration then yields pressure and,
-    when requested, fluid velocity for one time, while a raw geometry
-    fingerprint verifies that VTK cell order and topology remain identical to
-    the first frame.
+    Frames with identical geometry bytes reuse the first frame's ordering.
+    Otherwise, each frame's pressure and velocity are aligned by point or face
+    to that ordering after verifying the surface geometry and face winding.
     """
 
     def __init__(
@@ -657,6 +727,7 @@ class OpenFOAMSurfaceSeries:
         ) = _surface_geometry(first.points, first.polygons, first.cell_count)
         self.face_ids = torch.arange(first.cell_count, dtype=torch.int32)
         self.geometry_fingerprint = first.geometry_fingerprint
+        self._reference_ordering = _SurfaceOrdering(first.points, first.polygons)
         self._point_data_mapping = first.point_data_mapping
         self._first_frame = self._make_frame(0, first)
 
@@ -911,6 +982,7 @@ class OpenFOAMSurfaceSeries:
                 include_geometry=False,
                 field_dtype=self.dtype,
                 point_data_mapping=self._point_data_mapping,
+                reference_ordering=self._reference_ordering,
                 read_attempts=self.read_attempts,
             )
             frame = self._make_frame(index, parsed)

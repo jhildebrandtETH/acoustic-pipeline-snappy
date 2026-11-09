@@ -85,7 +85,7 @@ class TonalTests(unittest.TestCase):
                 result = write_tonal_figures(report,
                     {'simulated': [(frequency, density)], 'measured': [(frequency, density), (frequency, density * 2)]},
                     metadata, {'floor_db': -120}, 1., 200.)
-            self.assertEqual(scales, ['log', 'log'])
+            self.assertEqual(scales, ['log'] * 4)
             sim, measured = result['spectra']['simulated'], result['spectra']['measured']
             self.assertEqual(sim['bpf_tones_hz'], [50.])
             self.assertEqual(sim['detected_tones_hz'], [50., 83.])
@@ -93,6 +93,7 @@ class TonalTests(unittest.TestCase):
                 powers = row['power_pa2']
                 self.assertAlmostEqual(powers['tonal'] + powers['broadband'], powers['overall'])
                 self.assertTrue((report / f'acoustic-tonal-{kind}.png').is_file())
+                self.assertTrue((report / f'acoustic-tonal-{kind}.pdf').read_bytes().startswith(b'%PDF'))
                 data = np.loadtxt(report / f'acoustic-tonal-{kind}.csv', delimiter=',', skiprows=1)
                 np.testing.assert_allclose(data[:, 1], data[:, 2] + data[:, 3])
             self.assertAlmostEqual(measured['power_pa2']['overall'], 1.5 * sim['power_pa2']['overall'])

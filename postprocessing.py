@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from tools.report_worker import create_simulation_report
 from visualization import run_visualization
 from tools import MATPLOTLIB_LOCK
@@ -38,7 +40,6 @@ def postprocessing(
         return None
 
     if AERODYNAMICS_ONLY:
-        from pathlib import Path
         import json
         report = Path(SIMULATION_WORKING_DIRECTORY) / "report"
         report.mkdir(parents=True, exist_ok=True)
@@ -93,7 +94,7 @@ def postprocessing(
             status_callback=STATUS_CALLBACK,
         )
 
-    if not AERODYNAMICS_ONLY and (SIMULATION_WORKING_DIRECTORY / 'acoustic-surfaces.json').is_file():
+    if not AERODYNAMICS_ONLY and (Path(SIMULATION_WORKING_DIRECTORY) / 'acoustic-surfaces.json').is_file():
         from tools.acoustic_study import run_study
         run_study(SIMULATION_WORKING_DIRECTORY, RPM_COUNT, MODE, TURBULENCE_MODEL,
                   status_callback=STATUS_CALLBACK)

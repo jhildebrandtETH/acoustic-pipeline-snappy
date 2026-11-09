@@ -30,7 +30,7 @@
     "experimental_rotation_center_m": [
       0,
       0,
-      0
+      0.75
     ],
     "simulation_rotation_center_m": [
       0,
@@ -57,25 +57,15 @@
     "microphone_positions_m": {},
     "plane_tolerance_m": 0.005,
     "maximum_connected_gap_deg": 60,
-    "planes": [],
-    "elevation_planes": [
+    "planes": [
       {
-        "name": "Elevation in simulation XY plane",
-        "radial_direction_simulation": [
-          1,
-          0,
-          0
-        ]
-      },
-      {
-        "name": "Elevation in simulation ZY plane",
-        "radial_direction_simulation": [
-          0,
-          0,
-          1
-        ]
+        "name": "Rotor-plane azimuth (XZ)",
+        "channels": ["6", "10", "8", "1"],
+        "zero_direction": [1, 0, 0],
+        "positive_direction": [0, 0, 1]
       }
-    ]
+    ],
+    "elevation_planes": []
   },
   "tonal_analysis": {
     "median_window_bins": 21,

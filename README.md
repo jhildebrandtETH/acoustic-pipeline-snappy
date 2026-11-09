@@ -402,3 +402,18 @@ This feature is in the root snappy pipeline; the ANSYS import pipeline is unchan
 ## Case monitor: local and Slurm
 
 Use python main.py --sim-dir /path/to/order --watch (or --status) for either execution mode, without a Slurm config. See [case monitor details](Parameters/case-monitor.md).
+
+### Thesis figure exports
+
+Quantitative plots are saved as PNGs and vector PDFs. Full-resolution atlas
+views and their camera, phase and color scale metadata are in `report/visuals/`.
+Q-criterion views share framing and color limits across phases and thresholds.
+The latest available phase includes six viewpoints.
+
+The wall-shear figures show skin-friction trajectories and flag connected
+surface edges where tangential shear converges from both sides. Review these
+candidates against the surrounding surface and near-wall flow before labeling
+a separation line. Available trajectories and candidates are saved as VTK
+polydata alongside the images. In the case's `visualization.json`,
+`skin_friction_sign` defaults to `-1` for OpenFOAM wall traction. Use `1` for a
+field already oriented in the near-wall flow direction.

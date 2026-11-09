@@ -165,12 +165,18 @@ class DirectivityTests(unittest.TestCase):
                 self.assertTrue((case / 'report' / filename).is_file())
             canvas = Canvas(str(case / 'report/directivity.pdf'))
             append_directivity_report(canvas, case)
-            self.assertEqual(canvas.getPageNumber(), 4)
+            self.assertEqual(canvas.getPageNumber(), 5)
             canvas.save()
             config['directivity']['planes'][0]['channels'].append('2')
             failed = directivity_or_status(case, config)
             self.assertEqual(failed['status'], 'unavailable')
             self.assertIn('not coplanar', failed['detail'])
+            self.assertEqual(len(failed['channels']), 5)
+            self.assertTrue((case / 'report' / failed['channel_comparison_figure']).is_file())
+            self.assertTrue((case / 'report/acoustic-microphone-comparison.pdf').is_file())
+            self.assertTrue((case / 'report/acoustic-microphone-comparison.csv').is_file())
+            self.assertIn('bpf_1', failed['harmonic_bands_hz'])
+            self.assertIn('bpf_2', failed['harmonic_bands_hz'])
 
     def test_disabled_needs_no_coordinates_or_cache(self):
         with tempfile.TemporaryDirectory() as temporary:
