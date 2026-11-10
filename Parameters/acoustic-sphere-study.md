@@ -36,9 +36,12 @@ For a pilot, replace the range option with:
 Choose exactly one of `--acoustic-sphere-diameter` (legacy single sphere),
 `--acoustic-sphere-diameters`, or `--acoustic-sphere-range`. Ranges include both
 endpoints and must reach STOP exactly. Factors must be unique, finite and greater
-than one. The largest sphere sizes the shared domain and refinement geometry.
-Every sphere must enclose the complete propeller; an off-centre or thick rotor
-may not fit inside 1.1D. Keep observers outside all selected spheres.
+than one. Both acoustic modes use `refinementSphereDiameter` from
+`Parameters/snappyGeometry.json` for the domain and mesh refinement, with a
+default of 2.5D. A single permeable sampling sphere uses that diameter unless
+specified separately. Changing the sampling diameter or mode keeps the same
+mesh inputs. Every sampling sphere must fit inside the CFD domain and enclose
+the complete propeller. Keep observers outside all selected spheres.
 
 Selections are saved in `simulation_order.json` and restored on `--resume`,
 including Slurm runs. Resume does not add new surfaces to a completed flow record.

@@ -126,46 +126,54 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
         raise ValueError('Propeller swept radius does not fit inside rotor cylinder')
     if np.abs(vertices[:, 1]).max() >= half:
         raise ValueError('Propeller does not fit axially inside rotor cylinder')
-    multiplier = acoustic_diameter if acoustic_surface == 'permeable' else config['refinementSphereDiameter']
-    if multiplier is None or not math.isfinite(multiplier) or multiplier <= 0:
-        raise ValueError('Sphere diameter multiplier must be finite and positive')
-    sphere_radius = .5 * multiplier * diameter
-    if sphere_radius <= np.linalg.norm(vertices, axis=1).max():
-        raise ValueError('Acoustic/refinement sphere must enclose the complete propeller')
-    if acoustic_diameters:
-        if acoustic_surface != 'permeable':
-            raise ValueError('Multiple spheres require permeable acoustics')
-        from tools.acoustic_study import diameter_factors
-        acoustic_diameters = diameter_factors(acoustic_diameters)
-        if max(acoustic_diameters) != multiplier:
-            raise ValueError('Shared mesh must use the largest acoustic sphere factor')
-        for factor in acoustic_diameters:
-            if .5 * factor * diameter <= np.linalg.norm(vertices, axis=1).max():
-                raise ValueError(f'Acoustic sphere {factor:g}D must enclose the complete propeller')
-    lateral = sphere_radius * (1 + config['lateralMargin'])
-    inlet = sphere_radius * (1 + config['inletMargin'])
+    refinement_factor = config['refinementSphereDiameter']
+    refinement_radius = .5 * refinement_factor * diameter
+    propeller_radius = np.linalg.norm(vertices, axis=1).max()
+    if refinement_radius <= propeller_radius:
+        raise ValueError('Refinement sphere must enclose the complete propeller')
+    lateral = refinement_radius * (1 + config['lateralMargin'])
+    inlet = refinement_radius * (1 + config['inletMargin'])
     outlet = inlet * (1-config['inletFraction'])/config['inletFraction']
     lower, upper = [-lateral, -outlet, -lateral], [lateral, inlet, lateral]
-    if min(lateral, inlet, outlet) <= sphere_radius or min(inlet, outlet) <= half or lateral <= radius:
+    domain_radius = min(lateral, inlet, outlet)
+    if domain_radius <= refinement_radius or min(inlet, outlet) <= half or lateral <= radius:
         raise ValueError('Domain must enclose the rotor and refinement sphere')
+
+    if acoustic_diameters and acoustic_surface != 'permeable':
+        raise ValueError('Multiple spheres require permeable acoustics')
+    sampling_factors = []
+    acoustic_radius = None
+    if acoustic_surface == 'permeable':
+        from tools.acoustic_study import diameter_factors
+        sampling_factor = refinement_factor if acoustic_diameter is None else acoustic_diameter
+        sampling_factors = diameter_factors(acoustic_diameters or [sampling_factor])
+        for factor in sampling_factors:
+            sampling_radius = .5 * factor * diameter
+            if sampling_radius <= propeller_radius:
+                raise ValueError(f'Acoustic sphere {factor:g}D must enclose the complete propeller')
+            if sampling_radius >= domain_radius:
+                raise ValueError(f'Acoustic sphere {factor:g}D must fit inside the CFD domain. '
+                                 'Increase refinementSphereDiameter or the domain margins.')
+        acoustic_radius = .5 * max(sampling_factors) * diameter
+
     surface = case/'constant/triSurface'
     surface.mkdir(parents=True, exist_ok=True)
     trimesh.Trimesh(vertices=vertices, faces=faces, process=False).export(surface/'propeller.stl')
     rotation = trimesh.transformations.rotation_matrix(np.pi/2, [1, 0, 0])
     for name, r, h, offset in (
         ('rotaryCylinder', radius, 2*half, 0),
-        ('innerCylinder', .6*sphere_radius, .52*sphere_radius, -.12*sphere_radius),
-        ('outerCylinder', .8*sphere_radius, .72*sphere_radius, -.12*sphere_radius),
+        ('innerCylinder', .6*refinement_radius, .52*refinement_radius, -.12*refinement_radius),
+        ('outerCylinder', .8*refinement_radius, .72*refinement_radius, -.12*refinement_radius),
     ):
         cylinder = trimesh.creation.cylinder(radius=r, height=h, sections=segments)
         cylinder.apply_transform(rotation)
         cylinder.apply_translation([0, offset, 0])
         cylinder.export(surface/(name+'.stl'))
-    # This is always a refinement surface; sampling is independently enabled.
-    trimesh.creation.icosphere(subdivisions=4, radius=sphere_radius).export(surface/'permeableSurface.stl')
-    if acoustic_diameters:
+    # Keep the STL name expected by existing mesh templates and preparation snapshots.
+    trimesh.creation.icosphere(subdivisions=4, radius=refinement_radius).export(surface/'permeableSurface.stl')
+    if sampling_factors:
         from tools.acoustic_study import configure_recording
-        configure_recording(case, acoustic_diameters, diameter)
+        configure_recording(case, sampling_factors, diameter, record_study=bool(acoustic_diameters))
     x0,y0,z0 = lower
     x1,y1,z1 = upper
     corners = [(x0,y0,z0),(x1,y0,z0),(x1,y1,z0),(x0,y1,z0),
@@ -188,8 +196,8 @@ outlet { type patch; faces ((1 5 4 0)); }
         scale=config['scale'], diameter_m=diameter, box_min=lower, box_max=upper,
         rotor_radius_m=radius, rotor_half_length_m=half, axis=[0,1,0], origin=[0,0,0],
         expected_fluid_volume_m3=float(np.prod(np.array(upper)-lower))-abs(volume),
-        acoustic_sphere_radius_m=sphere_radius if acoustic_surface == 'permeable' else None,
-        refinement_sphere_radius_m=sphere_radius, settings=config, features=features,
+        acoustic_sphere_radius_m=acoustic_radius,
+        refinement_sphere_radius_m=refinement_radius, settings=config, features=features,
     ), indent=2)+'\n')
     (case/'sim.foam').touch()
 

@@ -39,8 +39,8 @@ def sphere_key(factor):
     return 'sphere_' + format(factor, '.10g').replace('.', 'p') + 'D'
 
 
-def configure_recording(case, factors, diameter):
-    """Keep the original largest-sphere writer, add independent p/U writers."""
+def configure_recording(case, factors, diameter, *, record_study=True):
+    """Configure p/U writers using STLs separate from the refinement mesh input."""
     import trimesh
     case = Path(case)
     factors = diameter_factors(factors)
@@ -56,22 +56,25 @@ def configure_recording(case, factors, diameter):
     if depth:
         raise ValueError('Unbalanced acoustic writer dictionary')
     original = text[match.start():end]
-    additions, surfaces = [], []
+    surface_entry = re.search(r'(?m)^([ \t]*surface[ \t]+)[^;\r\n]+;', original)
+    if not surface_entry:
+        raise ValueError('Permeable writer is missing its sampling surface file')
+    writers, surfaces = [], []
     largest = max(factors)
     for factor in factors:
         key = sphere_key(factor)
         writer = 'writePermeableSurfaceFields' if factor == largest else 'write_' + key
-        stl = 'permeableSurface.stl' if factor == largest else key + '.stl'
+        stl = 'permeableSamplingSurface.stl' if factor == largest else key + '.stl'
         radius = .5 * factor * diameter
-        if factor != largest:
-            trimesh.creation.icosphere(subdivisions=4, radius=radius).export(case/'constant/triSurface'/stl)
-            additions.append(original.replace('writePermeableSurfaceFields', writer, 1)
-                             .replace('permeableSurface.stl', stl))
+        trimesh.creation.icosphere(subdivisions=4, radius=radius).export(case/'constant/triSurface'/stl)
+        dictionary = (original[:surface_entry.end(1)] + stl + ';' + original[surface_entry.end():])
+        writers.append(dictionary.replace('writePermeableSurfaceFields', writer, 1))
         surfaces.append(dict(factor=factor, radius_m=radius, writer=writer,
                              surface_file='permeableSurface.vtk', stl=stl))
-    control.write_text(text[:end] + '\n' + '\n'.join(additions) + text[end:])
-    (case/'acoustic-surfaces.json').write_text(json.dumps(
-        dict(propeller_diameter_m=diameter, surfaces=surfaces), indent=2)+'\n')
+    control.write_text(text[:match.start()] + '\n    '.join(writers) + text[end:])
+    if record_study:
+        (case/'acoustic-surfaces.json').write_text(json.dumps(
+            dict(propeller_diameter_m=diameter, surfaces=surfaces), indent=2)+'\n')
 
 
 def _link(source, destination):

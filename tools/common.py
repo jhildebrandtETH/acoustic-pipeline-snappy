@@ -72,7 +72,7 @@ def _case_path_state(path: Path) -> str:
 
 
 def validate_acoustic_arguments(parser, args):
-    """Validate coupled acoustic CLI arguments and apply safe defaults."""
+    """Validate acoustic CLI arguments and normalize diameter studies."""
     from tools.acoustic_study import diameter_factors
     plural = getattr(args, 'acoustic_sphere_diameters', None)
     sweep = getattr(args, 'acoustic_sphere_range', None)
@@ -102,14 +102,8 @@ def validate_acoustic_arguments(parser, args):
         parser.error(
             "Impermeable acoustic mode was selected but "
             "--acoustic-sphere-diameter was also supplied. The sphere "
-            "diameter is only used for permeable mode."
+            "sampling diameter is only used for permeable mode."
         )
-
-    if (
-        args.acoustic_surface == "permeable"
-        and args.acoustic_sphere_diameter is None
-    ):
-        args.acoustic_sphere_diameter = 2.5
 
 
 def report_case_stage(

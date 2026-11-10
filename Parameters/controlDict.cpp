@@ -7,7 +7,7 @@ writeInterval 1.52587890625e-4;
 // Target uniform acoustic grid: 1/65536 s. p/U are saved every solver step.
 acousticWriteInterval 1.52587890625e-5;
 // Adaptive steps cannot exceed the target acoustic sample interval.
-maxDeltaT $acousticWriteInterval;
+maxDeltaT 1e-5;
 purgeWrite 10;
 adjustTimeStep yes;
 // Adaptive growth remains limited by maxCo, the startup cap and maxDeltaT.

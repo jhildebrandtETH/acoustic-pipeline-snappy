@@ -3,7 +3,7 @@
   "rotorRadiusFactor": 0.6,
   "rotorHalfLength": 0.025,
   "cylinderSegments": 256,
-  "refinementSphereDiameter": 2.0,
+  "refinementSphereDiameter": 2.5,
   "lateralMargin": 0.1,
   "inletMargin": 0.1,
   "inletFraction": 0.3,

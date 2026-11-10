@@ -13,23 +13,49 @@ from tools.templates import template_directory
 
 class SnappyTests(unittest.TestCase):
     def test_geometry_modes_scale_and_studies(self):
-        for acoustic in (None, 'impermeable', 'permeable'):
-            with self.subTest(acoustic=acoustic), tempfile.TemporaryDirectory() as tmp:
-                case = Path(tmp)/'case'
-                shutil.copytree(template_directory('AMI','kOmegaSST','yes'), case)
-                shutil.copytree(mesh.ROOT/'Parameters', case/'Parameters')
-                solid = trimesh.creation.icosphere(subdivisions=1, radius=80)
-                solid.vertices[:,1] *= .1
-                source = Path(tmp)/'arbitrary-name.stl'
-                solid.export(source)
-                mesh.prepare_geometry(case,source,acoustic,2.0,
-                                      study=('snappyGeometry.json','scale','0.001'))
-                data = json.loads((case/'mesh/geometry.json').read_text())
-                self.assertAlmostEqual(data['diameter_m'], .16)
-                self.assertEqual(data['layers'], mesh.configured_layers(case))
-                self.assertTrue((case/'constant/triSurface/permeableSurface.stl').is_file())
-                self.assertEqual(data['acoustic_sphere_radius_m'] is None, acoustic != 'permeable')
-                self.assertIn('locationInMesh', (case/'Parameters/snappyGeometry.generated').read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            solid = trimesh.creation.icosphere(subdivisions=1, radius=80)
+            solid.vertices[:, 1] *= .1
+            source = root/'arbitrary-name.stl'
+            solid.export(source)
+            inputs = ('Parameters/blockMesh.generated', 'Parameters/snappyGeometry.generated',
+                      'constant/triSurface/permeableSurface.stl', 'constant/triSurface/innerCylinder.stl',
+                      'constant/triSurface/outerCylinder.stl')
+            for refinement_override in (None, 2.2):
+                expected_inputs = None
+                for mode, diameter in ((None, None), ('impermeable', None),
+                                       ('permeable', None), ('permeable', 1.8)):
+                    with self.subTest(refinement_override=refinement_override, mode=mode, diameter=diameter):
+                        case = root/f'{refinement_override}-{mode}-{diameter}'
+                        shutil.copytree(template_directory('AMI', 'kOmegaSST', 'yes'), case)
+                        shutil.copytree(mesh.ROOT/'Parameters', case/'Parameters')
+                        if refinement_override is not None:
+                            path = case/'Parameters/snappyGeometry.json'
+                            config = json.loads(path.read_text())
+                            config['refinementSphereDiameter'] = refinement_override
+                            path.write_text(json.dumps(config))
+                        mesh.prepare_geometry(case, source, mode, diameter,
+                                              study=('snappyGeometry.json', 'scale', '0.001'))
+                        data = json.loads((case/'mesh/geometry.json').read_text())
+                        self.assertAlmostEqual(data['diameter_m'], .16)
+                        self.assertEqual(data['layers'], mesh.configured_layers(case))
+                        refinement_factor = refinement_override or 2.5
+                        self.assertAlmostEqual(data['refinement_sphere_radius_m'], .08 * refinement_factor)
+                        actual_inputs = [(case/name).read_bytes() for name in inputs]
+                        if expected_inputs is None:
+                            expected_inputs = actual_inputs
+                        self.assertEqual(actual_inputs, expected_inputs)
+                        sampling = case/'constant/triSurface/permeableSamplingSurface.stl'
+                        self.assertFalse((case/'acoustic-surfaces.json').exists())
+                        if mode == 'permeable':
+                            expected_radius = .08 * (diameter or refinement_factor)
+                            self.assertAlmostEqual(data['acoustic_sphere_radius_m'], expected_radius)
+                            self.assertAlmostEqual(trimesh.load(sampling).extents.max(), 2 * expected_radius)
+                            self.assertIn(sampling.name, (case/'system/controlDict').read_text())
+                        else:
+                            self.assertIsNone(data['acoustic_sphere_radius_m'])
+                            self.assertFalse(sampling.exists())
 
     def test_layer_switch_study_is_respected(self):
         with tempfile.TemporaryDirectory() as tmp:

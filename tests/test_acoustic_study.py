@@ -43,7 +43,7 @@ class AcousticStudyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 diameter_factors(values)
 
-    def test_cli_uses_largest_factor_for_shared_mesh(self):
+    def test_cli_uses_largest_factor_as_primary_sampling_surface(self):
         parser = create_parser()
         args = parser.parse_args(['--sim-dir', 'output/study', '--acoustic-surface', 'permeable',
                                   '--acoustic-sphere-range', '2.5', '1.1', '-0.1'])
@@ -78,10 +78,10 @@ class AcousticStudyTests(unittest.TestCase):
                     self.assertEqual(writer['writeInterval'], '1')
                     self.assertEqual(writer['fields'], '(p U)')
                     self.assertEqual(writer['surfaces']['permeableSurface']['surface'], item['stl'])
-                    if item['factor'] != 2.5:
-                        mesh = trimesh.load(case/'constant/triSurface'/item['stl'], force='mesh')
-                        self.assertTrue(mesh.is_watertight)
-                        self.assertAlmostEqual(np.linalg.norm(mesh.vertices, axis=1).max(), item['radius_m'], places=6)
+                    self.assertNotEqual(item['stl'], 'permeableSurface.stl')
+                    mesh = trimesh.load(case/'constant/triSurface'/item['stl'], force='mesh')
+                    self.assertTrue(mesh.is_watertight)
+                    self.assertAlmostEqual(np.linalg.norm(mesh.vertices, axis=1).max(), item['radius_m'], places=6)
 
     def fixture(self, root):
         case = root/'blade_6000RPM_AMI'
@@ -116,6 +116,16 @@ class AcousticStudyTests(unittest.TestCase):
             geometry.write_text(json.dumps(config))
             with self.assertRaisesRegex(ValueError, '1.1D must enclose'):
                 prepare_geometry(case, source, 'permeable', 2.5, acoustic_diameters=[2.5, 1.1])
+
+    def test_sphere_outside_domain_is_rejected_without_resizing_mesh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case, _ = self.fixture(root)
+            block_mesh = case/'Parameters/blockMesh.generated'
+            original = block_mesh.read_bytes()
+            with self.assertRaisesRegex(ValueError, '3D must fit inside the CFD domain'):
+                prepare_geometry(case, root/'blade.stl', 'permeable', 3.0)
+            self.assertEqual(block_mesh.read_bytes(), original)
 
     def test_study_routes_each_history_to_own_report_and_preserves_base(self):
         with tempfile.TemporaryDirectory() as tmp:

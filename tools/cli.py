@@ -116,7 +116,7 @@ def create_parser():
         "--acoustic-sphere-diameter",
         default=None,
         type=float,
-        help="Permeable sphere diameter as a multiple of propeller diameter.",
+        help="Permeable sampling diameter in propeller diameters (defaults to the configured refinement diameter).",
     )
     parser.add_argument('--acoustic-sphere-diameters', nargs='+', type=float,
                         help='Record several sphere diameter factors in one CFD run.')
