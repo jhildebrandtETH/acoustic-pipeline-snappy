@@ -30,6 +30,8 @@ def main() -> None:
         parser.error('--slurm supports rotor orders, not --mesh-case/--mesh-native')
     if args.slurm_config and not args.slurm:
         parser.error('--slurm-config requires --slurm')
+    if args.ami_dimension_study and (args.mesh_case or args.mesh_native):
+        parser.error('--ami_dimension_study requires a propeller order')
 
     if args.mesh_case or args.mesh_native:
         from tools.simple_mesh_pipeline import run_simple_mesh_pipeline

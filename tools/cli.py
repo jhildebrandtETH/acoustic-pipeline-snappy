@@ -64,6 +64,10 @@ def create_parser():
     parser.add_argument("--aerodynamics-only", action="store_true",
                         help="Disable acoustic sampling, solving and propagation; retain aerodynamic results and reports.")
     parser.add_argument("--study", action="store_true")
+    parser.add_argument(
+        "--ami_dimension_study", "--ami-dimension-study", action="store_true",
+        help="Run the 16-case AMI diameter and axial extent study for one propeller and RPM.",
+    )
     parser.add_argument("--study-file")
     parser.add_argument("--study-parameter")
     parser.add_argument(

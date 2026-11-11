@@ -85,7 +85,8 @@ def configured_layers(case):
     return value in ('true', 'yes', 'on', '1')
 
 
-def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=None, acoustic_diameters=None):
+def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=None,
+                     acoustic_diameters=None, ami_study=None):
     import numpy as np
     import trimesh
     from tools.geometry import read_stl
@@ -103,8 +104,9 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
         elif not update_parameter(path, entry, value, quiet=True):
             raise ValueError(f'Cannot update study parameter {entry} in {path}')
     config = json.loads((case/'Parameters/snappyGeometry.json').read_text())
+    config.setdefault('domainAndCylinderSizingDiameter', config['refinementSphereDiameter'])
     positive = ('scale', 'rotorRadiusFactor', 'rotorHalfLength', 'refinementSphereDiameter',
-                'lateralMargin', 'inletMargin', 'maxRelativeVolumeError')
+                'domainAndCylinderSizingDiameter', 'lateralMargin', 'inletMargin', 'maxRelativeVolumeError')
     if any(not math.isfinite(config[k]) or config[k] <= 0 for k in positive):
         raise ValueError('Geometry dimensions, margins and volume tolerance must be finite and positive')
     segments = config['cylinderSegments']
@@ -120,23 +122,38 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
     diameter = float(np.ptp(vertices, axis=0).max())
     if not .02 < diameter < 2:
         raise ValueError('Check STL scale: measured propeller span must be 0.02–2 m')
-    radius = config['rotorRadiusFactor'] * diameter
-    half = config['rotorHalfLength']
+    refinement_factor = config['refinementSphereDiameter']
+    sizing_factor = config['domainAndCylinderSizingDiameter']
+    rotor_radius_factor = config['rotorRadiusFactor']
+    upstream = downstream = config['rotorHalfLength']
+    if ami_study is not None:
+        refinement_factor = ami_study['refinement_sphere_diameter_factor']
+        sizing_factor = ami_study['base_sphere_diameter_factor']
+        rotor_radius_factor = .5 * ami_study['diameter_factor']
+
+    sizing_radius = .5 * sizing_factor * diameter
+    outer_height, outer_offset = .72 * sizing_radius, -.12 * sizing_radius
+    if ami_study is not None:
+        fraction = ami_study['axial_fraction']
+        upstream = (1 - fraction) * upstream + fraction * (outer_height / 2 + outer_offset)
+        downstream = (1 - fraction) * downstream + fraction * (outer_height / 2 - outer_offset)
+    radius = rotor_radius_factor * diameter
+    half = (upstream + downstream) / 2
+    rotor_offset = (upstream - downstream) / 2
     if np.hypot(vertices[:, 0], vertices[:, 2]).max() >= radius*math.cos(math.pi/segments):
         raise ValueError('Propeller swept radius does not fit inside rotor cylinder')
-    if np.abs(vertices[:, 1]).max() >= half:
+    if vertices[:, 1].max() >= upstream or vertices[:, 1].min() <= -downstream:
         raise ValueError('Propeller does not fit axially inside rotor cylinder')
-    refinement_factor = config['refinementSphereDiameter']
     refinement_radius = .5 * refinement_factor * diameter
     propeller_radius = np.linalg.norm(vertices, axis=1).max()
     if refinement_radius <= propeller_radius:
         raise ValueError('Refinement sphere must enclose the complete propeller')
-    lateral = refinement_radius * (1 + config['lateralMargin'])
-    inlet = refinement_radius * (1 + config['inletMargin'])
+    lateral = sizing_radius * (1 + config['lateralMargin'])
+    inlet = sizing_radius * (1 + config['inletMargin'])
     outlet = inlet * (1-config['inletFraction'])/config['inletFraction']
     lower, upper = [-lateral, -outlet, -lateral], [lateral, inlet, lateral]
     domain_radius = min(lateral, inlet, outlet)
-    if domain_radius <= refinement_radius or min(inlet, outlet) <= half or lateral <= radius:
+    if domain_radius <= refinement_radius or inlet <= upstream or outlet <= downstream or lateral <= radius:
         raise ValueError('Domain must enclose the rotor and refinement sphere')
 
     if acoustic_diameters and acoustic_surface != 'permeable':
@@ -153,17 +170,26 @@ def prepare_geometry(case, source, acoustic_surface, acoustic_diameter, study=No
                 raise ValueError(f'Acoustic sphere {factor:g}D must enclose the complete propeller')
             if sampling_radius >= domain_radius:
                 raise ValueError(f'Acoustic sphere {factor:g}D must fit inside the CFD domain. '
-                                 'Increase refinementSphereDiameter or the domain margins.')
+                                 'Increase domainAndCylinderSizingDiameter or the domain margins.')
         acoustic_radius = .5 * max(sampling_factors) * diameter
+
+    study_metadata = {}
+    if ami_study is not None:
+        from tools.ami_dimension_study import STUDY_KEY, apply_mesh_parameters
+        apply_mesh_parameters(case, ami_study)
+        study_metadata[STUDY_KEY] = dict(
+            ami_study, upstream_cap_y_m=upstream, downstream_cap_y_m=-downstream,
+            upstream_cap_y_over_d=upstream / diameter, downstream_cap_y_over_d=-downstream / diameter,
+        )
 
     surface = case/'constant/triSurface'
     surface.mkdir(parents=True, exist_ok=True)
     trimesh.Trimesh(vertices=vertices, faces=faces, process=False).export(surface/'propeller.stl')
     rotation = trimesh.transformations.rotation_matrix(np.pi/2, [1, 0, 0])
     for name, r, h, offset in (
-        ('rotaryCylinder', radius, 2*half, 0),
-        ('innerCylinder', .6*refinement_radius, .52*refinement_radius, -.12*refinement_radius),
-        ('outerCylinder', .8*refinement_radius, .72*refinement_radius, -.12*refinement_radius),
+        ('rotaryCylinder', radius, 2*half, rotor_offset),
+        ('innerCylinder', .6*sizing_radius, .52*sizing_radius, -.12*sizing_radius),
+        ('outerCylinder', .8*sizing_radius, outer_height, outer_offset),
     ):
         cylinder = trimesh.creation.cylinder(radius=r, height=h, sections=segments)
         cylinder.apply_transform(rotation)
@@ -187,7 +213,7 @@ outlet { type patch; faces ((1 5 4 0)); }
 );
 '''
     write(case/'Parameters/blockMesh.generated', block)
-    location = (.013*lateral, -.5*(outlet+half), .017*lateral)
+    location = (.013*lateral, -.5*(outlet+downstream), .017*lateral)
     write(case/'Parameters/snappyGeometry.generated', 'locationInMesh ('+' '.join(map(str,location))+');\n')
     from tools.snappy_features import prepare_features
     features = prepare_features(case, source, config['scale'])
@@ -197,7 +223,10 @@ outlet { type patch; faces ((1 5 4 0)); }
         rotor_radius_m=radius, rotor_half_length_m=half, axis=[0,1,0], origin=[0,0,0],
         expected_fluid_volume_m3=float(np.prod(np.array(upper)-lower))-abs(volume),
         acoustic_sphere_radius_m=acoustic_radius,
-        refinement_sphere_radius_m=refinement_radius, settings=config, features=features,
+        refinement_sphere_radius_m=refinement_radius,
+        settings=dict(config, refinementSphereDiameter=refinement_factor,
+                      domainAndCylinderSizingDiameter=sizing_factor), features=features,
+        **study_metadata,
     ), indent=2)+'\n')
     (case/'sim.foam').touch()
 

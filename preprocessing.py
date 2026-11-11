@@ -132,6 +132,14 @@ def preprocessing(
     study = None
     if STUDY_PARAMETER_NAME is not None:
         study = (STUDY_PARAMETER_FILE, STUDY_PARAMETER_NAME, STUDY_PARAMETER)
+    ami_study = None
+    if order.get('ami_dimension_study'):
+        from tools.ami_dimension_study import STUDY_KEY
+        stored_case = next((case for case in order['cases']
+                            if case['folder'] == SIMULATION_NAME), None)
+        if not stored_case or STUDY_KEY not in stored_case:
+            raise ValueError(f'Missing AMI dimension study settings for {SIMULATION_NAME}')
+        ami_study = stored_case[STUDY_KEY]
     emit_status(
         STATUS_CALLBACK, stage="preprocessing",
         detail="reading mesh settings and preparing geometry",
@@ -143,6 +151,7 @@ def preprocessing(
         ACOUSTIC_SPHERE_DIAMETER,
         study=study,
         acoustic_diameters=order.get('acoustic_sphere_diameters'),
+        ami_study=ami_study,
     )
     emit_status(
         STATUS_CALLBACK,

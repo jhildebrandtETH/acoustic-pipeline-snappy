@@ -40,7 +40,7 @@ class SnappyTests(unittest.TestCase):
                         data = json.loads((case/'mesh/geometry.json').read_text())
                         self.assertAlmostEqual(data['diameter_m'], .16)
                         self.assertEqual(data['layers'], mesh.configured_layers(case))
-                        refinement_factor = refinement_override or 2.5
+                        refinement_factor = refinement_override or 2.1
                         self.assertAlmostEqual(data['refinement_sphere_radius_m'], .08 * refinement_factor)
                         actual_inputs = [(case/name).read_bytes() for name in inputs]
                         if expected_inputs is None:

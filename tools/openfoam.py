@@ -1075,33 +1075,39 @@ def create_simulation_order(args, simulations_directory: Path):
                 }
             )
     else:
+        variants = [("", {})]
+        if getattr(args, "ami_dimension_study", False):
+            from tools.ami_dimension_study import STUDY_KEY, case_variants
+            batch[STUDY_KEY] = True
+            variants = [(suffix, {STUDY_KEY: settings})
+                        for suffix, settings in case_variants()]
         for mesh in args.meshes:
             for rpm in args.rpms:
-                folder = f"{mesh}_{rpm}RPM_{args.mode}"
-
-                batch["cases"].append(
-                    {
-                        "folder": folder,
-                        "mesh": mesh,
-                        "rpm": rpm,
-                        "mode": args.mode,
-                        "turbulence": args.turbulence,
-                        "mesh_only": args.mesh_only,
-                        "end_on": args.end_on,
-                        "end_on_value": getattr(args, "end_on_value", None),
-                        "acoustic_surface": args.acoustic_surface,
-                        "acoustic_sphere_diameter": args.acoustic_sphere_diameter,
-                        "allow_bad_mesh": args.allow_bad_mesh,
-                        "field_init": args.field_init,
-                        "study": False,
-                        "study_file": None,
-                        "study_parameter": None,
-                        "study_value": None,
-                        "status": "pending",
-                        "resume_status": None,
-                        "error": None,
-                    }
-                )
+                for suffix, extra in variants:
+                    batch["cases"].append(
+                        {
+                            "folder": f"{mesh}_{rpm}RPM_{args.mode}{suffix}",
+                            "mesh": mesh,
+                            "rpm": rpm,
+                            "mode": args.mode,
+                            "turbulence": args.turbulence,
+                            "mesh_only": args.mesh_only,
+                            "end_on": args.end_on,
+                            "end_on_value": getattr(args, "end_on_value", None),
+                            "acoustic_surface": args.acoustic_surface,
+                            "acoustic_sphere_diameter": args.acoustic_sphere_diameter,
+                            "allow_bad_mesh": args.allow_bad_mesh,
+                            "field_init": args.field_init,
+                            "study": False,
+                            "study_file": None,
+                            "study_parameter": None,
+                            "study_value": None,
+                            "status": "pending",
+                            "resume_status": None,
+                            "error": None,
+                            **extra,
+                        }
+                    )
 
     folders = [case["folder"] for case in batch["cases"]]
     if not folders or len(set(folders)) != len(folders):

@@ -49,6 +49,8 @@ def prepare_simulation_order(args, parser):
             )
 
         raw_order = load_simulation_order(simulations_directory)
+        if args.ami_dimension_study and not raw_order.get('ami_dimension_study'):
+            parser.error('The saved order is not an AMI dimension study.')
         if bool(raw_order.get('slurm')) != bool(getattr(args, 'slurm', False)):
             parser.error('Resume must use the original execution mode (include --slurm for Slurm orders).')
         if raw_order.get("meshing_backend") not in COMPATIBLE_BACKENDS:
@@ -144,6 +146,8 @@ def prepare_simulation_order(args, parser):
     # ----------------------------------------------------------------------
     else:
         args.meshes = list(source_meshes.keys())
+        if args.ami_dimension_study and args.mode is None:
+            args.mode = 'AMI'
         missing = []
 
         if args.rpms is None:
@@ -189,6 +193,13 @@ def prepare_simulation_order(args, parser):
         except ValueError as error:
             parser.error(str(error))
         validate_acoustic_arguments(parser, args)
+
+        if args.ami_dimension_study:
+            from tools.ami_dimension_study import validate_options
+            try:
+                validate_options(args)
+            except ValueError as error:
+                parser.error(str(error))
 
         if args.study:
             study_missing = []

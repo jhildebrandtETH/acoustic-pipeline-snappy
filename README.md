@@ -45,6 +45,8 @@ python main.py --sim-dir output/my-order --resume
 
 Resume uses stored settings and allocations. Native-snappy and previous unlayered-snappy orders can resume; other backend orders require a fresh order directory. Failed meshing restarts from a fresh case while preserving the previous case in a timestamped sibling. Completed mesh/solve checkpoints allow report recovery without repeating the solver. A file lock prevents simultaneous launchers from modifying one order.
 
+For the 16-case AMI geometry sweep, see the [AMI dimension study](docs/ami-dimension-study.md).
+
 ## Slurm case jobs (optional)
 
 Without `--slurm`, the local Docker scheduler, meshing and dashboard behave as before.
