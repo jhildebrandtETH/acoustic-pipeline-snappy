@@ -1,5 +1,6 @@
 import json
 import math
+import re
 import shutil
 
 from tools.acoustic_time import case_sample_interval, source_time_statistics, uniform_result
@@ -10,7 +11,7 @@ from tools.acoustic_directivity import settings as directivity_settings, frame, 
 from tools.plotting import pyplot as plt, save_figure
 import torch
 
-from acousticSolver.src.foamacoustics import F1ASolver
+from acousticSolver.src.foamacoustics import F1ASolver, OpenFOAMSurfaceSeries
 from acousticSolver.src.foamacoustics.plotting import plot_spl_spectrum
 from tools import MATPLOTLIB_LOCK
 from tools import create_reference_geometry_vtk_series
@@ -19,6 +20,73 @@ from tools import emit_status
 
 # One analysis-window setting for both comparison and simulation-only spectra.
 ACOUSTIC_ANALYSIS_ROTATIONS = 15.0
+
+
+def _saved_case_dictionary(case, relative_path):
+    from tools.settings_report import read_dictionary, resolve_dictionary
+
+    return resolve_dictionary(read_dictionary(case / relative_path, case, {}, []))
+
+
+def _impermeable_density(case):
+    """Read the density used by OpenFOAM to dimensionalize the blade loads."""
+    path = "system/controlDict"
+    forces = _saved_case_dictionary(case, path).get("functions", {}).get("forcesBlades", {})
+    try:
+        density = float(forces.get("rhoInf", ""))
+    except ValueError:
+        density = math.nan
+    if forces.get("rho") != "rhoInf" or not math.isfinite(density) or density <= 0:
+        raise ValueError(f"{case / path}: expected a positive constant rhoInf in functions/forcesBlades.")
+    return density
+
+
+def _impermeable_pressure_settings(case, density):
+    """Read the saved outlet pressure datum and convert it to pascals."""
+    path = case / "0" / "p"
+    fields = _saved_case_dictionary(case, "0/p")
+    dimensions = re.fullmatch(r"\[([^\]]+)\]", fields.get("dimensions", ""))
+    units = tuple(map(float, dimensions[1].split())) if dimensions else ()
+    if units == (0, 2, -2, 0, 0, 0, 0):
+        pressure_units, scale = "kinematic", density
+    elif units == (1, -1, -2, 0, 0, 0, 0):
+        pressure_units, scale = "pa", 1.0
+    else:
+        raise ValueError(f"{path}: unsupported pressure dimensions for impermeable FW-H.")
+    patches = fields.get("boundaryField", {})
+    outlet = patches.get("outlet")
+    if outlet is None:
+        outlet = next((patch for name, patch in patches.items()
+                       if isinstance(patch, dict) and re.fullmatch(name, "outlet")), {})
+    datum = {"fixedValue": "value", "totalPressure": "p0"}.get(outlet.get("type"))
+    tokens = outlet.get(datum, "").split()
+    try:
+        reference = float(tokens[1]) if len(tokens) == 2 and tokens[0] == "uniform" else math.nan
+    except ValueError:
+        reference = math.nan
+    if not math.isfinite(reference * scale):
+        raise ValueError(f"{path}: expected a uniform outlet value or p0 for impermeable FW-H.")
+    return {"pressure_units": pressure_units, "pressure_reference_pa": reference * scale}
+
+
+def _impermeable_ami_rotation(case):
+    path = "constant/dynamicMeshDict"
+    if not (case / path).is_file():
+        return None
+    motion = _saved_case_dictionary(case, path)
+    for key in ("mover", "motionSolverListCoeffs", "solvers", "rotor", "rotatingMotionCoeffs"):
+        motion = motion.get(key, {})
+    try:
+        origin = tuple(map(float, motion["origin"].strip("()").split()))
+        axis = tuple(map(float, motion["axis"].strip("()").split()))
+        omega = float(motion["omega"])
+        if (len(origin) == 3 and all(map(math.isfinite, origin))
+                and len(axis) == 3 and axis[0] == axis[2] == 0
+                and math.isfinite(axis[1]) and axis[1] != 0 and math.isfinite(omega) and omega != 0):
+            return math.copysign(1.0, axis[1]) * omega, origin
+    except (KeyError, ValueError):
+        pass
+    raise ValueError(f"{case / path}: expected constant rigid rotation about the y axis for impermeable FW-H.")
 
 
 def run_acoustic_solver(
@@ -67,11 +135,7 @@ def run_acoustic_solver(
         surface_directory = (
             SIMULATION_WORKING_DIRECTORY / "postProcessing" / "writePatchFields"
         )
-        acoustic_surface_directory = (
-            SIMULATION_WORKING_DIRECTORY
-            / "postProcessing"
-            / "writePatchFields_referenceGeometry"
-        )
+        acoustic_surface_directory = surface_directory
         surface_file = "propeller.vtk"
         permeable = False
     else:
@@ -147,7 +211,7 @@ def run_acoustic_solver(
     if SURFACE_SERIES is None and permeable and recorded_study:
         # Preserve each frame's point and face IDs so the reader can align its fields.
         acoustic_surface_directory = surface_directory
-    elif SURFACE_SERIES is None:
+    elif SURFACE_SERIES is None and permeable:
         create_reference_geometry_vtk_series(
             surface_directory, acoustic_surface_directory, surface_file=surface_file,
         )
@@ -166,7 +230,7 @@ def run_acoustic_solver(
     cache_name = (
         "writePermeableSurfaceFields_referenceGeometry"
         if permeable
-        else "writePatchFields_referenceGeometry"
+        else "writePatchFields_impermeable"
     )
 
     solver_options = dict(
@@ -179,24 +243,49 @@ def run_acoustic_solver(
         device=device,
         response_delay_s=RESPONSE_DELAY_S,
     )
-    if SURFACE_SERIES is None:
-        solver = F1ASolver.from_openfoam_vtk(
-            acoustic_surface_directory, surface_file=surface_file,
-            cache_dir=SIMULATION_WORKING_DIRECTORY / '.cache' / cache_name,
-            **solver_options,
+    impermeable_vtk = SURFACE_SERIES is None and not permeable
+    try:
+        if impermeable_vtk:
+            density = _impermeable_density(SIMULATION_WORKING_DIRECTORY)
+            pressure_settings = _impermeable_pressure_settings(SIMULATION_WORKING_DIRECTORY, density)
+            rotation = _impermeable_ami_rotation(SIMULATION_WORKING_DIRECTORY)
+            if rotation is not None:
+                omega_y, origin = rotation
+                solver_options.update(rotation_center_m=origin, omega_rad_s=[0.0, omega_y, 0.0])
+            series = OpenFOAMSurfaceSeries(
+                surface_directory, surface_file=surface_file, velocity_field=None,
+                density_kg_m3=density, **pressure_settings, closed_surface=True,
+                geometry_rotation_y=rotation,
+                cache_dir=SIMULATION_WORKING_DIRECTORY / ".cache" / cache_name,
+            )
+            solver = F1ASolver(series, **solver_options)
+            resampling.update(
+                **pressure_settings, density_kg_m3=density, normal_orientation="closed VTK shell winding",
+                panel_alignment="rigid rotation and connectivity" if rotation else "stationary connectivity",
+            )
+        elif SURFACE_SERIES is None:
+            solver = F1ASolver.from_openfoam_vtk(
+                acoustic_surface_directory, surface_file=surface_file,
+                cache_dir=SIMULATION_WORKING_DIRECTORY / '.cache' / cache_name,
+                **solver_options,
+            )
+        else:
+            solver = F1ASolver(SURFACE_SERIES, **solver_options)
+
+        observer_m = torch.tensor(observer_coordinates, device=device)
+        emit_status(
+            STATUS_CALLBACK,
+            stage="acoustics",
+            detail=f"predicting pressure at {len(channels) if multiple else 1} observer(s)",
+            progress=55.0,
         )
-    else:
-        solver = F1ASolver(SURFACE_SERIES, **solver_options)
-
-    observer_m = torch.tensor(observer_coordinates, device=device)
-
-    emit_status(
-        STATUS_CALLBACK,
-        stage="acoustics",
-        detail=f"predicting pressure at {len(channels) if multiple else 1} observer(s)",
-        progress=55.0,
-    )
-    result = solver.predict(observer_m)
+        result = solver.predict(observer_m)
+    except (ValueError, OSError) as exc:
+        if impermeable_vtk:
+            failure = dict(resampling, status="invalid_impermeable_surface", detail=str(exc))
+            status_path.write_text(json.dumps(failure, indent=2))
+            resampling_path.write_text(json.dumps(failure, indent=2))
+        raise
     result = uniform_result(result, sample_interval)
     resampling.update(status="complete", observer_uniform_samples=len(result.observer_times_s))
     resampling_path.write_text(json.dumps(resampling, indent=2))

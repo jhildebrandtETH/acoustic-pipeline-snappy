@@ -95,11 +95,13 @@ class _SurfaceOrdering:
         return keys
 
     def field_order(
-        self, points: torch.Tensor, polygons: torch.Tensor, location: Literal["cell", "point"]
+        self, points: torch.Tensor, polygons: torch.Tensor, location: Literal["cell", "point"],
+        point_ids: list[int] | None = None,
     ) -> torch.Tensor:
-        point_ids = [self.point_ids.get(tuple(point), -1) for point in points.tolist()]
+        if point_ids is None:
+            point_ids = [self.point_ids.get(tuple(point), -1) for point in points.tolist()]
         if (
-            len(point_ids) != len(self.point_ids)
+            len(point_ids) != len(self.points)
             or -1 in point_ids
             or len(set(point_ids)) != len(point_ids)
         ):
@@ -115,6 +117,64 @@ class _SurfaceOrdering:
         else:
             rows = [face_rows[key] for key in self.face_keys]
         return torch.tensor(rows, dtype=torch.int64)
+
+
+class _RotatingSurfaceOrdering(_SurfaceOrdering):
+    """Match rigidly rotating OpenFOAM geometry in the first frame's coordinates."""
+
+    def __init__(self, points, polygons, center, omega_y, start_time):
+        super().__init__(points, polygons)
+        from vtkmodules.util.numpy_support import numpy_to_vtk
+        from vtkmodules.vtkCommonCore import vtkIdList, vtkPoints
+        from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkStaticPointLocator
+
+        self.center = torch.tensor(center, dtype=points.dtype)
+        self.omega_y = omega_y
+        self.start_time = start_time
+        self.tolerance = 2e-5 * float((points.amax(dim=0) - points.amin(dim=0)).max())
+        self._id_list = vtkIdList
+        vtk_points = vtkPoints()
+        vtk_points.SetData(numpy_to_vtk(points.contiguous().numpy(), deep=True))
+        geometry = vtkPolyData()
+        geometry.SetPoints(vtk_points)
+        self.locator = vtkStaticPointLocator()
+        self.locator.SetDataSet(geometry)
+        self.locator.BuildLocator()
+        nearby = vtkIdList()
+        self.separated = True
+        for point in points.tolist():
+            self.locator.FindPointsWithinRadius(2 * self.tolerance, point, nearby)
+            if nearby.GetNumberOfIds() != 1:
+                self.separated = False
+                break
+
+    def order_at(
+        self, points: torch.Tensor, polygons: torch.Tensor,
+        location: Literal["cell", "point"], time_s: float,
+    ) -> torch.Tensor | None:
+        if points.shape != self.points.shape:
+            raise ValueError("Point count differs from the first VTK frame.")
+        if not bool(torch.isfinite(points).all()):
+            raise ValueError("Rotating VTK point coordinates must be finite.")
+        angle = math.remainder(-self.omega_y * (time_s - self.start_time), math.tau)
+        c, s = math.cos(angle), math.sin(angle)
+        x, y, z = (points - self.center).unbind(dim=1)
+        restored = torch.stack((c * x + s * z, y, -s * x + c * z), dim=1) + self.center
+        if (
+            self.separated
+            and torch.equal(polygons, self.polygons)
+            and bool(torch.all(torch.linalg.vector_norm(restored - self.points, dim=1) <= self.tolerance))
+        ):
+            return None
+
+        nearby = self._id_list()
+        ids = []
+        for point in restored.tolist():
+            self.locator.FindPointsWithinRadius(self.tolerance, point, nearby)
+            if nearby.GetNumberOfIds() != 1:
+                raise ValueError("Rotating VTK point has no unique match in the first frame.")
+            ids.append(nearby.GetId(0))
+        return self.field_order(self.points, polygons, location, point_ids=ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +486,7 @@ def _read_surface_vtk_once(
     field_dtype: torch.dtype,
     point_data_mapping: _PointDataMapping | None,
     reference_ordering: _SurfaceOrdering | None,
+    frame_time_s: float | None = None,
 ) -> _ParsedSurfaceVTK:
     text = Path(path).read_bytes()
     points_match = _required_match(POINTS_RE, text, "POINTS", path)
@@ -445,7 +506,8 @@ def _read_surface_vtk_once(
     )
     data_start = min(section[3] for section in sections)
     fingerprint = _geometry_fingerprint(text, points_match, data_start)
-    geometry_changed = (
+    rotating = isinstance(reference_ordering, _RotatingSurfaceOrdering)
+    geometry_changed = rotating or (
         expected_geometry_fingerprint is not None
         and fingerprint != expected_geometry_fingerprint
     )
@@ -470,12 +532,17 @@ def _read_surface_vtk_once(
     if geometry_changed:
         assert reference_ordering is not None and points is not None and polygons is not None
         try:
-            order = reference_ordering.field_order(points, polygons, location)
+            if isinstance(reference_ordering, _RotatingSurfaceOrdering):
+                assert frame_time_s is not None
+                order = reference_ordering.order_at(points, polygons, location, frame_time_s)
+            else:
+                order = reference_ordering.field_order(points, polygons, location)
         except ValueError as error:
             raise ValueError(f"{path}: {error}") from error
-        pressure = pressure.index_select(0, order)
-        if fluid_velocity is not None:
-            fluid_velocity = fluid_velocity.index_select(0, order)
+        if order is not None:
+            pressure = pressure.index_select(0, order)
+            if fluid_velocity is not None:
+                fluid_velocity = fluid_velocity.index_select(0, order)
         points, polygons = reference_ordering.points, reference_ordering.polygons
     if location == "point":
         mapping = point_data_mapping
@@ -513,6 +580,7 @@ def _read_surface_vtk(
     field_dtype: torch.dtype,
     point_data_mapping: _PointDataMapping | None = None,
     reference_ordering: _SurfaceOrdering | None = None,
+    frame_time_s: float | None = None,
     read_attempts: int = VTK_READ_ATTEMPTS,
 ) -> _ParsedSurfaceVTK:
     read_attempts = positive_int(read_attempts, "read_attempts")
@@ -528,6 +596,7 @@ def _read_surface_vtk(
                 field_dtype=field_dtype,
                 point_data_mapping=point_data_mapping,
                 reference_ordering=reference_ordering,
+                frame_time_s=frame_time_s,
             )
         except (OSError, VTKSectionError):
             if attempt + 1 == read_attempts:
@@ -577,7 +646,11 @@ def _surface_geometry(
     points: torch.Tensor,
     polygons: torch.Tensor,
     cell_count: int,
+    *,
+    closed_surface: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if closed_surface and not bool(torch.isfinite(points).all()):
+        raise ValueError("Impermeable VTK point coordinates must be finite.")
     counts, starts, vertex_indices, next_vertex_indices = _polygon_edges(
         polygons,
         cell_count,
@@ -596,16 +669,63 @@ def _surface_geometry(
     )
     area_vectors *= 0.5
 
-    # Orient every face away from the mean surface centre.
-    surface_center = centers.mean(dim=0)
-    inward = torch.einsum("ij,ij->i", centers - surface_center, area_vectors) <= 0.0
-    area_vectors[inward] *= -1.0
+    if closed_surface:
+        _orient_closed_surface(polygons, centers, area_vectors, len(points))
+    else:
+        # Legacy orientation for sampled permeable surfaces.
+        surface_center = centers.mean(dim=0)
+        inward = torch.einsum("ij,ij->i", centers - surface_center, area_vectors) <= 0.0
+        area_vectors[inward] *= -1.0
 
     areas = torch.linalg.vector_norm(area_vectors, dim=1)
     if torch.any(areas <= 0.0).item():
         raise ValueError("At least one VTK cell has zero area.")
     normals = area_vectors / areas[:, None]
     return centers, normals, areas, area_vectors
+
+
+def _orient_closed_surface(polygons, centers, area_vectors, point_count):
+    """Validate VTK winding and reverse only entire inward-oriented shells."""
+    neighbours = [[] for _ in range(len(centers))]
+    edges = {}
+    paired_edges = set()
+    for face, vertices in enumerate(_polygon_keys(polygons, list(range(point_count)))):
+        for start, end in zip(vertices, (*vertices[1:], vertices[0])):
+            edge = (min(start, end), max(start, end))
+            if edge in paired_edges:
+                raise ValueError("Impermeable VTK surface has a non-manifold edge.")
+            previous = edges.pop(edge, None)
+            if previous is None:
+                edges[edge] = (face, start)
+                continue
+            other, other_start = previous
+            if start == other_start:
+                raise ValueError("Impermeable VTK surface has inconsistent face winding.")
+            paired_edges.add(edge)
+            neighbours[face].append(other)
+            neighbours[other].append(face)
+    if edges:
+        raise ValueError("Impermeable VTK surface is open. Sample the full blade and hub wall.")
+
+    visited = set()
+    for face in range(len(centers)):
+        if face in visited:
+            continue
+        component = [face]
+        visited.add(face)
+        for current in component:
+            for other in neighbours[current]:
+                if other not in visited:
+                    component.append(other)
+                    visited.add(other)
+        ids = torch.tensor(component, dtype=torch.int64)
+        local_centers = centers[ids] - centers[face]
+        volume_terms = torch.einsum("ij,ij->i", local_centers, area_vectors[ids])
+        volume = float(volume_terms.sum())
+        if not math.isfinite(volume) or abs(volume) <= 1e-12 * float(volume_terms.abs().sum()):
+            raise ValueError("Impermeable VTK surface has indeterminate signed volume.")
+        if volume < 0:
+            area_vectors[ids] *= -1.0
 
 
 class OpenFOAMSurfaceSeries:
@@ -631,6 +751,8 @@ class OpenFOAMSurfaceSeries:
         max_times: int | None = None,
         read_attempts: int = VTK_READ_ATTEMPTS,
         cache_dir: str | Path | None = None,
+        closed_surface: bool = False,
+        geometry_rotation_y: tuple[float, tuple[float, float, float]] | None = None,
     ) -> None:
         """Index a legacy-VTK surface time series.
 
@@ -649,6 +771,9 @@ class OpenFOAMSurfaceSeries:
             max_times: Optional maximum number of ordered frames, at least two.
             read_attempts: VTK read attempts before reporting an invalid frame.
             cache_dir: Optional memory-mapped binary-cache directory.
+            closed_surface: Preserve consistent VTK winding and orient each closed shell outward.
+            geometry_rotation_y: Signed rad/s and centre of sampled +y-axis
+                rotation for matching panels back to the first frame.
 
         Raises:
             FileNotFoundError: If the input directory does not exist.
@@ -667,6 +792,8 @@ class OpenFOAMSurfaceSeries:
         self.dtype = resolve_dtype(dtype)
         self.read_attempts = positive_int(read_attempts, "read_attempts")
         self.cache_dir = None if cache_dir is None else Path(cache_dir)
+        self.closed_surface = closed_surface
+        self.geometry_rotation_y = geometry_rotation_y
         self.is_moving_surface = False
         self.uses_surface_kinematics = False
         self._cached_pressure: torch.Tensor | None = None
@@ -719,15 +846,31 @@ class OpenFOAMSurfaceSeries:
 
         self.points_m = first.points
         self.polygons = first.polygons
-        (
-            self.face_centers_m,
-            self.face_normals,
-            self.face_areas_m2,
-            self.outward_area_vectors_m2,
-        ) = _surface_geometry(first.points, first.polygons, first.cell_count)
+        try:
+            (
+                self.face_centers_m,
+                self.face_normals,
+                self.face_areas_m2,
+                self.outward_area_vectors_m2,
+            ) = _surface_geometry(
+                first.points, first.polygons, first.cell_count, closed_surface=self.closed_surface,
+            )
+            if geometry_rotation_y is None:
+                self._reference_ordering = _SurfaceOrdering(first.points, first.polygons)
+            else:
+                omega_y, center = geometry_rotation_y
+                self._reference_ordering = _RotatingSurfaceOrdering(
+                    first.points, first.polygons, center, omega_y, float(self.absolute_times_s[0]),
+                )
+            if self.closed_surface:
+                # Validate even when later frames have identical geometry bytes.
+                _ = self._reference_ordering.point_ids, self._reference_ordering.face_keys
+        except ValueError as error:
+            if self.closed_surface:
+                raise ValueError(f"{first_path}: {error}") from error
+            raise
         self.face_ids = torch.arange(first.cell_count, dtype=torch.int32)
         self.geometry_fingerprint = first.geometry_fingerprint
-        self._reference_ordering = _SurfaceOrdering(first.points, first.polygons)
         self._point_data_mapping = first.point_data_mapping
         self._first_frame = self._make_frame(0, first)
 
@@ -753,6 +896,8 @@ class OpenFOAMSurfaceSeries:
             "panel_count": self.panel_count,
             "geometry_fingerprint": self.geometry_fingerprint,
             "source_signatures": self._source_signatures,
+            "closed_surface": self.closed_surface,
+            "geometry_rotation_y": self.geometry_rotation_y,
         }
 
     def _cache_matches(self, metadata: dict[str, object]) -> bool:
@@ -771,6 +916,8 @@ class OpenFOAMSurfaceSeries:
             and metadata.get("pressure_units") == self.pressure_units
             and metadata.get("density_kg_m3") == self.density_kg_m3
             and metadata.get("pressure_reference_pa") == self.pressure_reference_pa
+            and metadata.get("closed_surface", False) == self.closed_surface
+            and metadata.get("geometry_rotation_y") == self.geometry_rotation_y
             and metadata.get("dtype") == str(self.dtype)
             and tuple(cached_time_names) == self.time_names
             and tuple(cached_source_signatures) == self._source_signatures
@@ -983,6 +1130,7 @@ class OpenFOAMSurfaceSeries:
                 field_dtype=self.dtype,
                 point_data_mapping=self._point_data_mapping,
                 reference_ordering=self._reference_ordering,
+                frame_time_s=float(self.absolute_times_s[index]),
                 read_attempts=self.read_attempts,
             )
             frame = self._make_frame(index, parsed)

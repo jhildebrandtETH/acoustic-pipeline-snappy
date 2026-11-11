@@ -192,6 +192,16 @@ class DirectivityTests(unittest.TestCase):
             (case / 'Parameters').mkdir()
             (case / 'Parameters/acousticComparison.json').write_text(json.dumps(config))
             (case / 'Parameters/controlDict.cpp').write_text('acousticWriteInterval 0.000125;')
+            (case / '0').mkdir()
+            (case / '0/p').write_text(
+                'dimensions [0 2 -2 0 0 0 0]; '
+                'boundaryField { outlet { type fixedValue; value uniform 101325; } }'
+            )
+            (case / 'system').mkdir()
+            (case / 'system/controlDict').write_text(
+                '#include "../Parameters/controlDict.cpp"\n'
+                'functions { forcesBlades { rho rhoInf; rhoInf 1.2; } }'
+            )
             for time in map(str, np.arange(801) / 8000):
                 directory = case / 'postProcessing/writePatchFields' / time
                 directory.mkdir(parents=True)
@@ -212,10 +222,16 @@ class DirectivityTests(unittest.TestCase):
             def comparison(case_path, unused_config):
                 (case_path / 'report/acoustic-simulated.png').write_bytes(b'test image')
                 return {'status': 'complete'}
-            with patch.object(stage.F1ASolver, 'from_openfoam_vtk', return_value=solver), \
-                 patch.object(stage, 'create_reference_geometry_vtk_series'), \
+            with patch.object(stage, 'F1ASolver', return_value=solver), \
+                 patch.object(stage, 'OpenFOAMSurfaceSeries') as reader, \
+                 patch.object(stage, 'create_reference_geometry_vtk_series') as rewrite, \
                  patch.object(stage, 'comparison_or_status', side_effect=comparison):
                 stage.run_acoustic_solver('impermeable', case, 4000)
+            rewrite.assert_not_called()
+            self.assertEqual(reader.call_args.args[0], case / 'postProcessing/writePatchFields')
+            self.assertTrue(reader.call_args.kwargs['closed_surface'])
+            self.assertEqual(reader.call_args.kwargs['density_kg_m3'], 1.2)
+            self.assertAlmostEqual(reader.call_args.kwargs['pressure_reference_pa'], 121590)
             self.assertEqual(solver.predict.call_count, 1)
             metadata = json.loads((case / 'report/acoustic-resampling.json').read_text())
             self.assertEqual(metadata['status'], 'complete')

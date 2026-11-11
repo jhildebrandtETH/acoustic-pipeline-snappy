@@ -392,6 +392,56 @@ now contains the area-weighted mean (or null when unavailable); the old face mea
 available as `yplus_stats.face_weighted.mean`.
 
 
+## Impermeable FW-H replay
+
+Impermeable propagation uses the original
+`postProcessing/writePatchFields/<time>/propeller.vtk` samples and the saved
+case dictionaries. Keep them when archiving a case.
+
+- **Gauge pressure.** The dimensions and outlet reference come from `0/p`.
+  The reader takes the outlet's uniform `fixedValue` or `totalPressure p0`
+  and uses `functions/forcesBlades/rhoInf` in `system/controlDict` to convert
+  kinematic pressure. It subtracts the same reference in pascals from every
+  face, preserving steady differences between faces and unsteady loading.
+- **Blade and hub normals.** The reader checks that each shell is closed and
+  consistently wound. It preserves the VTK winding within each shell and
+  reverses the whole shell if its signed volume is negative.
+- **Panel identity.** For AMI, the reader uses `constant/dynamicMeshDict` to
+  undo the rigid rotation about the y axis before matching points and face
+  connectivity to the first frame. MRF samples are matched in the stationary
+  mesh frame. Pressure values follow their faces when the order changes.
+  Ambiguous matches and incompatible face winding stop the replay.
+
+Run the following from the pipeline root in its Python environment. Replace
+the case directory, RPM, mode and turbulence model with the saved case values.
+This replays the saved VTK frames and rebuilds `report/simulation_report.pdf`
+without restarting CFD.
+
+```bash
+python - "/path/to/case" 4000 AMI DES <<'PY'
+from pathlib import Path
+import json
+import sys
+
+from acoustic_propagation import run_acoustic_solver
+from tools.report_worker import create_simulation_report
+
+case_arg, rpm_arg, mode, model = sys.argv[1:]
+case, rpm = Path(case_arg).resolve(), float(rpm_arg)
+run_acoustic_solver("impermeable", case, rpm)
+status = json.loads((case / "report" / "acoustic-status.json").read_text())
+if status["status"] != "complete":
+    raise SystemExit(status["detail"])
+create_simulation_report(case_path=case, rpm=rpm, mode=mode, turbulence_model=model,
+                         latest_report_path=case / "report" / "simulation_report.pdf")
+PY
+```
+
+`report/acoustic-resampling.json` records the pressure reference, normal
+orientation and panel-alignment method. If the replay rejects a frame, it
+records the reason in `report/acoustic-status.json`. The impermeable reader
+uses a separate cache location at `.cache/writePatchFields_impermeable`.
+
 ## Acoustic sphere studies
 
 Record multiple sphere diameters in one CFD run, or resample saved volume fields:
